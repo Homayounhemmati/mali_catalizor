@@ -67,20 +67,22 @@ function datePicker(el, iso, onChange) {
 // ---------- API ----------
 let me = null;
 async function api(path, opts = {}) {
-  const r = await fetch('/api' + path, { method: opts.method || 'GET', headers: opts.body ? { 'Content-Type': 'application/json' } : {}, body: opts.body ? JSON.stringify(opts.body) : undefined, credentials: 'same-origin' });
+  const r = await fetch('/api' + path, { method: opts.method || 'GET', headers: opts.body ? { 'Content-Type': 'application/json' } : {}, body: opts.body ? JSON.stringify(opts.body) : undefined, credentials: 'same-origin' })
+    .catch(() => { throw new Error('اتصال اینترنت برقرار نیست'); });
   const ct = r.headers.get('content-type') || '';
   const data = ct.includes('json') ? await r.json() : await r.text();
   if (!r.ok) { if (r.status === 401 && me) { me = null; showLogin(); } throw new Error(data.error || 'خطا'); }
   return data;
 }
-function toast(msg, kind = 'good') {
+function toast(msg, kind = 'good', ms = 2600) {
   const d = document.createElement('div'); d.className = kind; d.textContent = msg; $('#toast').append(d);
-  setTimeout(() => { d.style.transition = '.4s'; d.style.opacity = 0; setTimeout(() => d.remove(), 400); }, 2600);
+  setTimeout(() => { d.style.transition = '.4s'; d.style.opacity = 0; setTimeout(() => d.remove(), 400); }, ms);
 }
 const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, 'bad'); } };
 
 // ---------- ورود ----------
-function showLogin() { $('#app').classList.add('hidden'); $('#login').classList.remove('hidden'); }
+const hideSplash = () => $('#splash').classList.add('gone');
+function showLogin() { $('#app').classList.add('hidden'); $('#login').classList.remove('hidden'); $('#fab').classList.add('hidden'); hideSplash(); }
 $('#loginForm').onsubmit = async (e) => {
   e.preventDefault(); $('#loginErr').textContent = '';
   const f = new FormData(e.target);
@@ -106,7 +108,7 @@ document.addEventListener('keydown', (e) => e.key === 'Escape' && closeModal());
 // ---------- شروع برنامه ----------
 let cats = [];
 async function start() {
-  $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
+  $('#login').classList.add('hidden'); $('#app').classList.remove('hidden'); hideSplash(); iosHint();
   $('#meName').textContent = me.name; $('#meRole').textContent = ROLES[me.role]; $('#meAv').textContent = initial(me.name);
   const hr = new Date().getHours(); $('#greet').textContent = `${hr < 12 ? 'صبح بخیر' : hr < 18 ? 'روز بخیر' : 'عصر بخیر'}، ${me.name}`; $('#todayLine').textContent = 'امروز ' + showDate(todayIso());
   document.body.classList.toggle('readonly', me.role === 'partner'); document.body.classList.toggle('is-owner', me.role === 'owner');
@@ -132,6 +134,8 @@ function goTab(t) {
   tab = t;
   $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
   $$('.tab').forEach((s) => { const on = s.id === 'tab-' + t; s.classList.toggle('hidden', !on); });
+  const fab = $('#fab'), fabAct = { dash: () => txModal(), tx: () => txModal(), inv: () => invModal().catch((e) => toast(e.message, 'bad')), crm: () => custModal() }[t];
+  fab.classList.toggle('hidden', !fabAct || me.role === 'partner'); fab.onclick = fabAct || null; window.scrollTo({ top: 0 });
   ({ dash: loadDash, tx: () => loadTx(true), users: loadUsers, cats: () => {}, inv: loadInv, crm: loadCrm })[t]();
 }
 $$('[data-new]').forEach((b) => (b.onclick = () => txModal()));
@@ -198,6 +202,7 @@ let debounce; $('#fq').oninput = () => { clearTimeout(debounce); debounce = setT
 $('#ftype').onchange = $('#fcat').onchange = () => loadTx(true);
 $('#fclear').onclick = () => { $('#fq').value = ''; $('#ftype').value = ''; $('#fcat').value = ''; fFrom.set(''); fTo.set(''); loadTx(true); };
 $('#more').onclick = () => loadTx(false);
+$('#ftoggle').onclick = (e) => { const t = e.currentTarget.closest('.toolbar'); t.classList.toggle('open'); e.currentTarget.classList.toggle('on'); };
 $('#csv').onclick = (e) => { e.preventDefault(); location.href = '/api/export.csv' + qs(filters()); };
 const loadTx = guard(async (reset) => {
   if (reset) { txRows = []; txOffset = 0; }
@@ -349,7 +354,7 @@ function payModal(inv) {
 }
 function paperHtml(v) {
   const n = fa(v.number).replace(/٬/g, '');
-  return `<div class="paper"><div class="hd"><div><h1>${esc(biz.business_name || 'فاکتور فروش')}</h1><div>${esc(biz.business_address || '')}</div><div dir="ltr" style="text-align:right">${esc(biz.business_phone || '')}</div></div>
+  return `<div class="paper"><div class="hd"><div><h1>${esc(biz.business_name || 'کاتالیزور')}</h1><div>${esc(biz.business_address || '')}</div><div dir="ltr" style="text-align:right">${esc(biz.business_phone || '')}</div></div>
     <div class="meta"><b>فاکتور شماره ${n}</b><br>تاریخ: ${showDate(v.date)}${v.status === 'paid' ? '<br><span class="stamp">پرداخت شد</span>' : ''}</div></div>
     <div class="cust"><b>مشتری:</b> ${esc(v.customer)}${v.phone ? ` &nbsp;|&nbsp; <b>تلفن:</b> <span dir="ltr">${esc(v.phone)}</span>` : ''}${v.address ? `<br><b>آدرس:</b> ${esc(v.address)}` : ''}</div>
     <table><thead><tr><th>#</th><th>شرح</th><th>تعداد</th><th>قیمت واحد</th><th>جمع (تومان)</th></tr></thead><tbody>${v.items.map((i, k) => `<tr><td>${fa(k + 1)}</td><td>${esc(i.title)}</td><td>${fa(i.qty)}</td><td>${fa(i.price)}</td><td>${fa(Math.round(i.qty * i.price))}</td></tr>`).join('')}</tbody></table>
@@ -357,8 +362,9 @@ function paperHtml(v) {
     ${v.note ? `<p>${esc(v.note)}</p>` : ''}${biz.business_note ? `<div class="foot">${esc(biz.business_note).replace(/\n/g, '<br>')}</div>` : ''}</div>`;
 }
 function invView(v) {
-  modal(`${paperHtml(v)}<div class="form-actions"><button class="btn ghost" data-close>بستن</button><button class="btn primary" id="doPrint">🖨 چاپ / ذخیره PDF</button></div>`, (s) => {
-    s.classList.add('wide'); $('#doPrint', s).onclick = () => { $('#printArea').innerHTML = paperHtml(v); window.print(); };
+  modal(`${paperHtml(v)}<div class="form-actions"><button class="btn ghost" data-close>بستن</button>${navigator.share ? '<button class="btn ghost" id="doShare"><svg class="ic"><use href="#i-share"/></svg> اشتراک‌گذاری</button>' : ''}<button class="btn primary" id="doPrint">🖨 چاپ / PDF</button></div>`, (s) => {
+    s.classList.add('wide');
+    const sh = $('#doShare', s); if (sh) sh.onclick = () => navigator.share({ title: `فاکتور ${v.number}`, text: `فاکتور شماره ${v.number}\nمشتری: ${v.customer}\nتاریخ: ${showDate(v.date)}\nمبلغ قابل پرداخت: ${fa(v.total)} تومان${biz.business_note ? '\n\n' + biz.business_note : ''}` }).catch(() => {}); $('#doPrint', s).onclick = () => { $('#printArea').innerHTML = paperHtml(v); window.print(); };
   });
 }
 // ---------- مشتریان (CRM) ----------
@@ -446,6 +452,28 @@ function applyTheme(t) {
 }
 $('#themeBtn').onclick = () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
 applyTheme(document.documentElement.dataset.theme);
+
+// ---------- PWA و موبایل ----------
+// جدول‌ها در موبایل به کارت تبدیل می‌شوند؛ برچسب هر ستون روی سلول‌ها گذاشته می‌شود
+let lzQueued = false;
+const labelize = () => { lzQueued = false; $$('table').forEach((t) => {
+  if (t.closest('.paper')) return; t.classList.add('rt');
+  const hs = [...t.querySelectorAll('thead th')].map((h) => h.textContent.trim());
+  t.querySelectorAll('tbody tr').forEach((tr) => [...tr.children].forEach((td, i) => { if (td.dataset.label === undefined) td.dataset.label = hs[i] || ''; }));
+}); };
+new MutationObserver(() => { if (!lzQueued) { lzQueued = true; requestAnimationFrame(labelize); } }).observe(document.body, { childList: true, subtree: true });
+const setOnline = () => $('#offline').classList.toggle('hidden', navigator.onLine);
+addEventListener('online', setOnline); addEventListener('offline', setOnline); setOnline();
+let installEv = null;
+addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEv = e; $('#installBtn').classList.remove('hidden'); });
+$('#installBtn').onclick = async () => { if (!installEv) return; installEv.prompt(); await installEv.userChoice; installEv = null; $('#installBtn').classList.add('hidden'); };
+addEventListener('appinstalled', () => $('#installBtn').classList.add('hidden'));
+function iosHint() {
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent), standalone = navigator.standalone || matchMedia('(display-mode:standalone)').matches;
+  let seen = false; try { seen = localStorage.getItem('iosHint'); } catch {}
+  if (ios && !standalone && !seen) { try { localStorage.setItem('iosHint', '1'); } catch {} setTimeout(() => toast('برای نصب: دکمه اشتراک‌گذاری ⬆ را بزنید و «Add to Home Screen» را انتخاب کنید', 'good', 9000), 1500); }
+}
+if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 
 // ---------- بوت ----------
 api('/me').then((u) => { me = u; start(); }).catch(showLogin);
