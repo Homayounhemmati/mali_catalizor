@@ -30,6 +30,7 @@
     <nav id="tabs">
       <button data-tab="dash" class="active">داشبورد</button>
       <button data-tab="tx">تراکنش‌ها</button>
+      <button data-tab="inv">فاکتورها</button>
       <button data-tab="cats">دسته‌بندی‌ها</button>
       <button data-tab="users" data-role="owner">کاربران</button>
     </nav>
@@ -78,6 +79,14 @@
       <div class="pager"><button class="btn ghost sm" id="more" hidden>نمایش بیشتر</button><span class="muted" id="txInfo"></span></div>
     </section>
 
+    <section id="tab-inv" class="tab hidden">
+      <div class="toolbar">
+        <h2 class="h2">فاکتورها</h2>
+        <div class="row"><button class="btn ghost owner-only" id="bizBtn">⚙ اطلاعات کسب‌وکار</button><button class="btn primary write-only" id="newInv">＋ صدور فاکتور</button></div>
+      </div>
+      <div class="card nopad"><div class="tablewrap"><table id="invTable"></table></div></div>
+    </section>
+
     <section id="tab-cats" class="tab hidden">
       <div class="grid2">
         <div class="card"><h3>علت‌های ورودی</h3><ul class="cats" id="catIn"></ul></div>
@@ -109,6 +118,7 @@
 </div>
 
 <div id="modal" class="modal hidden"><div class="sheet card" id="sheet"></div></div>
+<div id="printArea"></div>
 <div id="toast"></div>
 <script src="/app.js"></script>
 </body>

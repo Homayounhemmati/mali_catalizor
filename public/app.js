@@ -96,7 +96,7 @@ function modal(html, init) {
   const s = $('#sheet'); s.innerHTML = html; $('#modal').classList.remove('hidden');
   $$('[data-close]', s).forEach((b) => (b.onclick = closeModal)); init && init(s);
 }
-function closeModal() { $('#modal').classList.add('hidden'); }
+function closeModal() { $('#modal').classList.add('hidden'); $('#sheet').classList.remove('wide'); }
 $('#modal').onclick = (e) => { if (e.target.id === 'modal') closeModal(); };
 document.addEventListener('keydown', (e) => e.key === 'Escape' && closeModal());
 
@@ -105,7 +105,7 @@ let cats = [];
 async function start() {
   $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
   $('#meName').textContent = me.name; $('#meRole').textContent = ROLES[me.role];
-  document.body.classList.toggle('readonly', me.role === 'partner');
+  document.body.classList.toggle('readonly', me.role === 'partner'); document.body.classList.toggle('is-owner', me.role === 'owner');
   $$('[data-role=owner]').forEach((b) => b.classList.toggle('hidden', me.role !== 'owner'));
   await loadCats(); goTab('dash');
 }
@@ -128,7 +128,7 @@ function goTab(t) {
   tab = t;
   $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
   $$('.tab').forEach((s) => { const on = s.id === 'tab-' + t; s.classList.toggle('hidden', !on); });
-  ({ dash: loadDash, tx: () => loadTx(true), users: loadUsers, cats: () => {} })[t]();
+  ({ dash: loadDash, tx: () => loadTx(true), users: loadUsers, cats: () => {}, inv: loadInv })[t]();
 }
 $$('[data-new]').forEach((b) => (b.onclick = () => txModal()));
 
@@ -245,7 +245,7 @@ const loadUsers = guard(async () => {
   $$('[data-role]', $('#userTable')).forEach((s) => (s.onchange = guard(async () => { await api('/users/' + s.dataset.role, { method: 'PUT', body: { role: s.value } }); toast('نقش تغییر کرد'); })));
   $$('[data-toggle]').forEach((b) => (b.onclick = guard(async () => { await api('/users/' + b.dataset.toggle, { method: 'PUT', body: { active: b.dataset.on !== '1' } }); loadUsers(); })));
   $$('[data-reset]').forEach((b) => (b.onclick = guard(async () => { const p = prompt('رمز جدید (حداقل ۶ کاراکتر):'); if (!p) return; await api('/users/' + b.dataset.reset, { method: 'PUT', body: { password: p } }); toast('رمز تغییر کرد'); })));
-  const log = await api('/audit'), L = { login: 'ورود', password: 'تغییر رمز', 'tx.create': 'ثبت تراکنش', 'tx.update': 'ویرایش تراکنش', 'tx.delete': 'حذف تراکنش', 'user.create': 'افزودن کاربر', 'user.update': 'ویرایش کاربر' };
+  const log = await api('/audit'), L = { login: 'ورود', password: 'تغییر رمز', 'tx.create': 'ثبت تراکنش', 'tx.update': 'ویرایش تراکنش', 'tx.delete': 'حذف تراکنش', 'user.create': 'افزودن کاربر', 'user.update': 'ویرایش کاربر', 'invoice.create': 'صدور فاکتور', 'invoice.update': 'ویرایش فاکتور', 'invoice.delete': 'حذف فاکتور', 'invoice.pay': 'ثبت پرداخت فاکتور' };
   $('#auditList').innerHTML = log.map((a) => `<div><b>${esc(a.who || '—')}</b>${L[a.action] || esc(a.action)}<span style="margin-inline-start:auto" dir="ltr">${esc(a.at)}</span></div>`).join('') || '<div class="empty">—</div>';
 });
 $('#userForm').onsubmit = guard(async (e) => {
@@ -253,5 +253,95 @@ $('#userForm').onsubmit = guard(async (e) => {
   await api('/users', { method: 'POST', body: f }); e.target.reset(); toast('کاربر اضافه شد'); loadUsers();
 });
 
+// ---------- فاکتور ----------
+let biz = {}, invs = [];
+const loadInv = guard(async () => {
+  [invs, biz] = await Promise.all([api('/invoices'), api('/settings')]);
+  const canW = me.role !== 'partner';
+  $('#invTable').innerHTML = invs.length ? `<thead><tr><th>شماره</th><th>تاریخ</th><th>مشتری</th><th>مبلغ کل (تومان)</th><th>وضعیت</th><th></th></tr></thead><tbody>${invs.map((v, i) => `
+    <tr style="animation-delay:${Math.min(i, 15) * 35}ms"><td><b>${fa(v.number).replace(/٬/g, '')}</b></td><td>${showDate(v.date)}</td><td>${esc(v.customer)}</td>
+    <td class="amt">${fa(v.total)}</td><td><span class="status ${v.status}">${v.status === 'paid' ? 'پرداخت شده' : 'پرداخت نشده'}</span></td>
+    <td class="act"><button data-view="${v.id}" title="مشاهده و چاپ">🖨</button>${canW && v.status === 'unpaid' ? `<button data-pay="${v.id}" title="ثبت دریافت وجه">✔ دریافت شد</button><button data-editinv="${v.id}" title="ویرایش">✎</button>` : ''}${me.role === 'owner' ? `<button class="del" data-delinv="${v.id}" title="حذف">🗑</button>` : ''}</td></tr>`).join('')}</tbody>` : '<tbody><tr><td><div class="empty">هنوز فاکتوری صادر نشده</div></td></tr></tbody>';
+  const byId = (id) => invs.find((x) => x.id == id);
+  $$('[data-view]', $('#invTable')).forEach((b) => (b.onclick = () => invView(byId(b.dataset.view))));
+  $$('[data-editinv]', $('#invTable')).forEach((b) => (b.onclick = () => invModal(byId(b.dataset.editinv))));
+  $$('[data-pay]', $('#invTable')).forEach((b) => (b.onclick = () => payModal(byId(b.dataset.pay))));
+  $$('[data-delinv]', $('#invTable')).forEach((b) => (b.onclick = guard(async () => { if (!confirm('فاکتور حذف شود؟ (تراکنش مالی ثبت‌شده حذف نمی‌شود)')) return; await api('/invoices/' + b.dataset.delinv, { method: 'DELETE' }); toast('حذف شد'); loadInv(); })));
+});
+$('#newInv').onclick = () => invModal();
+$('#bizBtn').onclick = guard(async () => {
+  biz = await api('/settings');
+  modal(`<h2>اطلاعات کسب‌وکار (بالای فاکتور)</h2><form class="form" id="bizForm">
+    <label class="full">نام کسب‌وکار<input name="business_name" value="${esc(biz.business_name)}"></label>
+    <label>تلفن<input name="business_phone" dir="ltr" value="${esc(biz.business_phone)}"></label>
+    <label>آدرس<input name="business_address" value="${esc(biz.business_address)}"></label>
+    <label class="full">متن پایین فاکتور (شماره حساب، شرایط…)<textarea name="business_note" rows="2">${esc(biz.business_note)}</textarea></label>
+    <div class="form-actions full"><button type="button" class="btn ghost" data-close>انصراف</button><button class="btn primary">ذخیره</button></div></form>`,
+  (s) => { $('#bizForm', s).onsubmit = guard(async (e) => { e.preventDefault(); await api('/settings', { method: 'PUT', body: Object.fromEntries(new FormData(e.target)) }); closeModal(); toast('ذخیره شد'); }); });
+});
+const num = (v) => Number(String(v).replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/[^\d.]/g, '')) || 0;
+function invModal(inv) {
+  modal(`<h2>${inv ? 'ویرایش فاکتور ' + fa(inv.number).replace(/٬/g, '') : 'صدور فاکتور جدید'}</h2><form class="form" id="invForm">
+    <label>نام مشتری<input name="customer" required maxlength="120" value="${esc(inv?.customer)}"></label>
+    <label>تاریخ<div class="jdate" id="idate"></div></label>
+    <label>تلفن<input name="phone" dir="ltr" maxlength="40" value="${esc(inv?.phone)}"></label>
+    <label>آدرس<input name="address" maxlength="300" value="${esc(inv?.address)}"></label>
+    <div class="full"><div class="itemhead"><span>شرح کالا / خدمت</span><span>تعداد</span><span>قیمت واحد</span><span>جمع</span><span></span></div><div class="items" id="items"></div>
+      <button type="button" class="btn ghost sm" id="addItem" style="margin-top:8px">＋ افزودن ردیف</button></div>
+    <label>تخفیف (تومان)<input name="discount" inputmode="numeric" dir="ltr" value="${inv ? inv.discount : ''}"></label>
+    <label>مالیات (٪)<input name="tax_percent" inputmode="decimal" dir="ltr" value="${inv ? inv.tax_percent : ''}" placeholder="۰"></label>
+    <label class="full">توضیحات<textarea name="note" rows="2" maxlength="500">${esc(inv?.note)}</textarea></label>
+    <div class="totals full" id="totals"></div>
+    <div class="form-actions full"><button type="button" class="btn ghost" data-close>انصراف</button><button class="btn primary">${inv ? 'ذخیره' : 'صدور فاکتور'}</button></div></form>`,
+  (s) => {
+    $('#sheet').classList.add('wide');
+    const f = $('#invForm', s), box = $('#items', s), dp = $('#idate', s); datePicker(dp, inv ? inv.date : todayIso());
+    const calc = () => {
+      const rows = $$('.item', box).map((r) => ({ q: num($('[data-q]', r).value), p: num($('[data-p]', r).value), el: $('.ln', r) }));
+      let sub = 0; rows.forEach((r) => { const l = Math.round(r.q * r.p); r.el.textContent = fa(l); sub += l; });
+      const disc = Math.min(sub, num(f.discount.value)), tax = Math.round((sub - disc) * Math.min(100, num(f.tax_percent.value)) / 100);
+      $('#totals', s).innerHTML = `<div><span>جمع کل</span><b>${fa(sub)}</b></div><div><span>تخفیف</span><b>${fa(disc)}</b></div><div><span>مالیات</span><b>${fa(tax)}</b></div><div class="grand"><span>مبلغ قابل پرداخت (تومان)</span><span>${fa(sub - disc + tax)}</span></div>`;
+    };
+    const addRow = (it = {}) => {
+      const r = document.createElement('div'); r.className = 'item';
+      r.innerHTML = `<input data-t placeholder="مثلاً: طراحی لوگو" maxlength="200" value="${esc(it.title)}"><input data-q inputmode="decimal" dir="ltr" value="${it.qty ?? 1}"><input data-p inputmode="numeric" dir="ltr" value="${it.price != null ? it.price.toLocaleString('en') : ''}"><span class="ln">۰</span><button type="button" title="حذف ردیف">✕</button>`;
+      $('[data-p]', r).oninput = (e) => { const n = num(e.target.value); e.target.value = n ? n.toLocaleString('en') : ''; };
+      $('button', r).onclick = () => { if ($$('.item', box).length > 1) { r.remove(); calc(); } };
+      box.append(r); calc();
+    };
+    (inv ? inv.items : [{}]).forEach(addRow);
+    $('#addItem', s).onclick = () => addRow();
+    f.oninput = calc; calc();
+    f.onsubmit = guard(async (e) => {
+      e.preventDefault(); const d = dp.get(); if (!d) throw new Error('تاریخ را کامل انتخاب کنید');
+      const items = $$('.item', box).map((r) => ({ title: $('[data-t]', r).value, qty: num($('[data-q]', r).value), price: num($('[data-p]', r).value) })).filter((i) => i.title.trim());
+      const body = { customer: f.customer.value, phone: f.phone.value, address: f.address.value, date: d, items, discount: num(f.discount.value), tax_percent: num(f.tax_percent.value), note: f.note.value };
+      const saved = await api(inv ? '/invoices/' + inv.id : '/invoices', { method: inv ? 'PUT' : 'POST', body });
+      toast(inv ? 'فاکتور ذخیره شد' : 'فاکتور صادر شد'); await loadInv(); invView(saved);
+    });
+  });
+}
+function payModal(inv) {
+  modal(`<h2>ثبت دریافت وجه فاکتور ${fa(inv.number).replace(/٬/g, '')}</h2><p class="muted">مبلغ ${fa(inv.total)} تومان به‌عنوان «ورودی» در تراکنش‌ها ثبت می‌شود.</p><form class="form" id="payForm">
+    <label>تاریخ دریافت<div class="jdate" id="pdate"></div></label>
+    <label>روش پرداخت<select name="method">${Object.entries(METHODS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
+    <div class="form-actions full"><button type="button" class="btn ghost" data-close>انصراف</button><button class="btn primary">ثبت دریافت</button></div></form>`,
+  (s) => { const dp = $('#pdate', s); datePicker(dp, todayIso());
+    $('#payForm', s).onsubmit = guard(async (e) => { e.preventDefault(); await api(`/invoices/${inv.id}/pay`, { method: 'POST', body: { date: dp.get(), method: e.target.method.value } }); closeModal(); toast('دریافت ثبت شد'); loadInv(); }); });
+}
+function paperHtml(v) {
+  const n = fa(v.number).replace(/٬/g, '');
+  return `<div class="paper"><div class="hd"><div><h1>${esc(biz.business_name || 'فاکتور فروش')}</h1><div>${esc(biz.business_address || '')}</div><div dir="ltr" style="text-align:right">${esc(biz.business_phone || '')}</div></div>
+    <div class="meta"><b>فاکتور شماره ${n}</b><br>تاریخ: ${showDate(v.date)}${v.status === 'paid' ? '<br><span class="stamp">پرداخت شد</span>' : ''}</div></div>
+    <div class="cust"><b>مشتری:</b> ${esc(v.customer)}${v.phone ? ` &nbsp;|&nbsp; <b>تلفن:</b> <span dir="ltr">${esc(v.phone)}</span>` : ''}${v.address ? `<br><b>آدرس:</b> ${esc(v.address)}` : ''}</div>
+    <table><thead><tr><th>#</th><th>شرح</th><th>تعداد</th><th>قیمت واحد</th><th>جمع (تومان)</th></tr></thead><tbody>${v.items.map((i, k) => `<tr><td>${fa(k + 1)}</td><td>${esc(i.title)}</td><td>${fa(i.qty)}</td><td>${fa(i.price)}</td><td>${fa(Math.round(i.qty * i.price))}</td></tr>`).join('')}</tbody></table>
+    <div class="sum"><div><span>جمع کل</span><span>${fa(v.subtotal)}</span></div>${v.discount ? `<div><span>تخفیف</span><span>${fa(v.discount)}</span></div>` : ''}${v.tax ? `<div><span>مالیات (${fa(v.tax_percent)}٪)</span><span>${fa(v.tax)}</span></div>` : ''}<div class="g"><span>مبلغ قابل پرداخت</span><span>${fa(v.total)} تومان</span></div></div>
+    ${v.note ? `<p>${esc(v.note)}</p>` : ''}${biz.business_note ? `<div class="foot">${esc(biz.business_note).replace(/\n/g, '<br>')}</div>` : ''}</div>`;
+}
+function invView(v) {
+  modal(`${paperHtml(v)}<div class="form-actions"><button class="btn ghost" data-close>بستن</button><button class="btn primary" id="doPrint">🖨 چاپ / ذخیره PDF</button></div>`, (s) => {
+    s.classList.add('wide'); $('#doPrint', s).onclick = () => { $('#printArea').innerHTML = paperHtml(v); window.print(); };
+  });
+}
 // ---------- بوت ----------
 api('/me').then((u) => { me = u; start(); }).catch(showLogin);

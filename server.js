@@ -28,6 +28,15 @@ CREATE TABLE IF NOT EXISTS transactions(
   ref TEXT DEFAULT '', note TEXT DEFAULT '', created_by INTEGER REFERENCES users(id),
   created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE INDEX IF NOT EXISTS idx_tx_date ON transactions(date);
+CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS invoices(
+  id INTEGER PRIMARY KEY, number INTEGER UNIQUE NOT NULL, date TEXT NOT NULL, customer TEXT NOT NULL,
+  phone TEXT DEFAULT '', address TEXT DEFAULT '', discount INTEGER NOT NULL DEFAULT 0, tax_percent REAL NOT NULL DEFAULT 0,
+  note TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'unpaid' CHECK(status IN ('unpaid','paid')), tx_id INTEGER,
+  created_by INTEGER REFERENCES users(id), created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS invoice_items(
+  id INTEGER PRIMARY KEY, invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+  title TEXT NOT NULL, qty REAL NOT NULL, price INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS audit(
   id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, detail TEXT, at TEXT DEFAULT CURRENT_TIMESTAMP);
 `);
@@ -104,6 +113,32 @@ function cleanTx(b) {
   if (!isDate(b.date)) throw new HttpError(400, 'تاریخ نامعتبر است');
   const method = ['cash', 'card', 'transfer', 'cheque', 'other'].includes(b.method) ? b.method : 'cash';
   return [b.type, amount, b.date, b.category_id ? +b.category_id : null, String(b.party || '').slice(0, 120), method, String(b.ref || '').slice(0, 60), String(b.note || '').slice(0, 500)];
+}
+
+
+function invoiceFull(id) {
+  const inv = db.prepare('SELECT * FROM invoices WHERE id=?').get(id);
+  inv.items = db.prepare('SELECT title,qty,price FROM invoice_items WHERE invoice_id=? ORDER BY id').all(id);
+  inv.subtotal = inv.items.reduce((a, i) => a + Math.round(i.qty * i.price), 0);
+  inv.tax = Math.round(Math.max(0, inv.subtotal - inv.discount) * inv.tax_percent / 100);
+  inv.total = Math.max(0, inv.subtotal - inv.discount) + inv.tax;
+  return inv;
+}
+function cleanInvoice(b) {
+  if (!isDate(b.date)) throw new HttpError(400, 'تاریخ نامعتبر است');
+  const customer = String(b.customer || '').trim().slice(0, 120);
+  if (!customer) throw new HttpError(400, 'نام مشتری را وارد کنید');
+  const items = (Array.isArray(b.items) ? b.items : []).map((i) => ({ title: String(i.title || '').trim().slice(0, 200), qty: Number(i.qty), price: Math.round(Number(i.price)) }))
+    .filter((i) => i.title);
+  if (!items.length || items.length > 100) throw new HttpError(400, 'حداقل یک ردیف کالا/خدمت لازم است');
+  if (items.some((i) => !(i.qty > 0) || !Number.isFinite(i.price) || i.price < 0)) throw new HttpError(400, 'تعداد و قیمت ردیف‌ها نامعتبر است');
+  const tax_percent = Math.min(100, Math.max(0, Number(b.tax_percent) || 0));
+  const discount = Math.max(0, Math.round(Number(b.discount) || 0));
+  return { date: b.date, customer, phone: String(b.phone || '').slice(0, 40), address: String(b.address || '').slice(0, 300), discount, tax_percent, note: String(b.note || '').slice(0, 500), items };
+}
+function saveItems(id, items) {
+  const ins = db.prepare('INSERT INTO invoice_items(invoice_id,title,qty,price) VALUES(?,?,?,?)');
+  items.forEach((i) => ins.run(id, i.title, i.qty, i.price));
 }
 
 // ---------- مسیرها ----------
@@ -213,6 +248,63 @@ async function api(req, res, url) {
     const csv = '﻿' + ['شناسه,نوع,مبلغ,تاریخ(میلادی),دسته,طرف حساب,روش پرداخت,شماره سند,توضیحات,ثبت‌کننده']
       .concat(rows.map((r) => [r.id, r.type === 'income' ? 'ورودی' : 'خروجی', r.amount, r.date, r.category, r.party, r.method, r.ref, r.note, r.author].map(esc).join(','))).join('\n');
     return send(res, 200, csv, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="transactions.csv"' });
+  }
+
+
+  // ---------- تنظیمات کسب‌وکار (روی فاکتور چاپ می‌شود) ----------
+  if (p === '/api/settings') {
+    if (m === 'GET') return send(res, 200, Object.fromEntries(db.prepare('SELECT key,value FROM settings').all().map((r) => [r.key, r.value])));
+    if (m === 'PUT') {
+      need(can.admin(user)); const b = await readBody(req);
+      const up = db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
+      for (const k of ['business_name', 'business_phone', 'business_address', 'business_note']) if (k in b) up.run(k, String(b[k]).slice(0, 300));
+      return send(res, 200, { ok: true });
+    }
+  }
+
+  // ---------- فاکتور ----------
+  if (p === '/api/invoices') {
+    if (m === 'GET') return send(res, 200, db.prepare('SELECT id FROM invoices ORDER BY number DESC LIMIT 300').all().map((r) => invoiceFull(r.id)));
+    if (m === 'POST') {
+      need(can.write(user)); const v = cleanInvoice(await readBody(req));
+      const number = (db.prepare('SELECT MAX(number) n FROM invoices').get().n || 1000) + 1;
+      const r = db.prepare('INSERT INTO invoices(number,date,customer,phone,address,discount,tax_percent,note,created_by) VALUES(?,?,?,?,?,?,?,?,?)').run(number, v.date, v.customer, v.phone, v.address, v.discount, v.tax_percent, v.note, user.id);
+      const id = Number(r.lastInsertRowid); saveItems(id, v.items);
+      audit(user, 'invoice.create', { id, number });
+      return send(res, 201, invoiceFull(id));
+    }
+  }
+  if ((mm = p.match(/^\/api\/invoices\/(\d+)(\/pay)?$/))) {
+    const id = +mm[1], inv = db.prepare('SELECT * FROM invoices WHERE id=?').get(id);
+    if (!inv) throw new HttpError(404, 'فاکتور یافت نشد');
+    if (mm[2] && m === 'POST') {
+      need(can.write(user));
+      if (inv.status === 'paid') throw new HttpError(409, 'این فاکتور قبلاً پرداخت شده');
+      const full = invoiceFull(id), body = await readBody(req);
+      const cat = db.prepare("SELECT id FROM categories WHERE name='فروش' AND type='income'").get();
+      const method = ['cash', 'card', 'transfer', 'cheque', 'other'].includes(body.method) ? body.method : 'cash';
+      const r = db.prepare("INSERT INTO transactions(type,amount,date,category_id,party,method,ref,note,created_by) VALUES('income',?,?,?,?,?,?,?,?)")
+        .run(full.total, isDate(body.date) ? body.date : inv.date, cat ? cat.id : null, inv.customer, method, String(inv.number), `دریافت وجه فاکتور ${inv.number}`, user.id);
+      db.prepare("UPDATE invoices SET status='paid', tx_id=? WHERE id=?").run(Number(r.lastInsertRowid), id);
+      audit(user, 'invoice.pay', { id, number: inv.number, amount: full.total });
+      return send(res, 200, invoiceFull(id));
+    }
+    if (m === 'GET') return send(res, 200, invoiceFull(id));
+    if (m === 'PUT') {
+      need(can.write(user));
+      if (inv.status === 'paid') throw new HttpError(409, 'فاکتور پرداخت‌شده قابل ویرایش نیست');
+      const v = cleanInvoice(await readBody(req));
+      db.prepare('UPDATE invoices SET date=?,customer=?,phone=?,address=?,discount=?,tax_percent=?,note=? WHERE id=?').run(v.date, v.customer, v.phone, v.address, v.discount, v.tax_percent, v.note, id);
+      db.prepare('DELETE FROM invoice_items WHERE invoice_id=?').run(id); saveItems(id, v.items);
+      audit(user, 'invoice.update', { id, number: inv.number });
+      return send(res, 200, invoiceFull(id));
+    }
+    if (m === 'DELETE') {
+      need(can.delete(user), 'فقط مدیر می‌تواند حذف کند');
+      db.prepare('DELETE FROM invoices WHERE id=?').run(id);
+      audit(user, 'invoice.delete', inv);
+      return send(res, 200, { ok: true });
+    }
   }
 
   if (p === '/api/users') {

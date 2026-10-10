@@ -125,3 +125,34 @@ tbody tr:hover{background:var(--surface)}
 @media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 [hidden]{display:none!important}
 .amt{direction:ltr;text-align:right}
+
+.h2{margin:0;font-size:20px}.row{display:flex;gap:10px;flex-wrap:wrap}
+.readonly .owner-only,body:not(.is-owner) .owner-only{display:none!important}
+.status{font-size:12px;padding:3px 10px;border-radius:99px;white-space:nowrap}
+.status.paid{background:color-mix(in srgb,var(--in) 20%,transparent);color:var(--in)}
+.status.unpaid{background:color-mix(in srgb,#ffb454 25%,transparent);color:#d98a1c}
+.sheet.wide{width:min(760px,100%)}
+.items{display:grid;gap:8px}
+.item{display:grid;grid-template-columns:3fr 1fr 1.4fr 1.3fr auto;gap:8px;align-items:center;animation:pop2 .3s both}
+.item .ln{font-weight:700;text-align:left;direction:ltr;white-space:nowrap;font-variant-numeric:tabular-nums}
+.item button{border:0;background:none;color:var(--muted);cursor:pointer;font-size:16px}.item button:hover{color:var(--out)}
+.itemhead{display:grid;grid-template-columns:3fr 1fr 1.4fr 1.3fr auto;gap:8px;font-size:12px;color:var(--muted)}
+.totals{display:grid;gap:6px;margin-top:6px;padding:12px 14px;border-radius:14px;background:var(--surface);border:1px solid var(--line);font-size:14px}
+.totals div{display:flex;justify-content:space-between}.totals .grand{font-size:18px;font-weight:800;color:var(--acc)}
+@media(max-width:620px){.item,.itemhead{grid-template-columns:1fr 1fr}.item input:first-child{grid-column:1/-1}.itemhead{display:none}}
+/* پیش‌نمایش و چاپ فاکتور */
+.paper{background:#fff;color:#111;border-radius:14px;padding:32px;font-size:14px;direction:rtl;font-family:Vazirmatn,Tahoma,sans-serif}
+.paper .hd{display:flex;justify-content:space-between;gap:20px;border-bottom:3px solid #4f5bd5;padding-bottom:16px;margin-bottom:18px}
+.paper h1{margin:0 0 4px;font-size:22px;color:#4f5bd5}.paper .meta{text-align:left;line-height:1.9}
+.paper .cust{background:#f4f5fb;border-radius:10px;padding:12px 14px;margin-bottom:16px;line-height:1.9}
+.paper table{border:1px solid #ddd}.paper th{background:#4f5bd5;color:#fff;border:0;padding:9px 10px}.paper td{border-bottom:1px solid #e6e6ee;padding:9px 10px}
+.paper .sum{margin-top:14px;margin-inline-start:auto;width:min(300px,100%);line-height:2}.paper .sum div{display:flex;justify-content:space-between}
+.paper .sum .g{border-top:2px solid #111;font-weight:800;font-size:16px;margin-top:4px;padding-top:4px}
+.paper .foot{margin-top:28px;color:#666;font-size:12px;border-top:1px dashed #ccc;padding-top:10px}
+.paper .stamp{display:inline-block;border:2px solid #0fa968;color:#0fa968;padding:2px 12px;border-radius:8px;font-weight:700;transform:rotate(-6deg)}
+#printArea{display:none}
+@media print{
+ body>*:not(#printArea){display:none!important}
+ #printArea{display:block}#printArea .paper{border-radius:0;padding:0}
+ @page{size:A4;margin:14mm}
+}
