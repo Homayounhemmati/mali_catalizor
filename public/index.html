@@ -2,15 +2,34 @@
 <html lang="fa" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#0f172a">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1020">
 <title>حسابداری ساده</title>
+<script>
+try{var t=localStorage.getItem('theme')||(matchMedia('(prefers-color-scheme:light)').matches?'light':'dark');document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme='dark'}
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
 <div class="bg"><i></i><i></i><i></i></div>
+<svg width="0" height="0" style="position:absolute"><defs>
+  <symbol id="i-dash" viewBox="0 0 24 24"><path d="M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z"/></symbol>
+  <symbol id="i-tx" viewBox="0 0 24 24"><path d="M7 7h13M16 3l4 4-4 4M17 17H4M8 13l-4 4 4 4"/></symbol>
+  <symbol id="i-inv" viewBox="0 0 24 24"><path d="M6 2h9l5 5v15H6zM14 2v6h6M9 13h8M9 17h8"/></symbol>
+  <symbol id="i-crm" viewBox="0 0 24 24"><circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-7 7-7s7 3 7 7M17 4a4 4 0 010 8M22 21c0-3-2-5.500-5-6.500"/></symbol>
+  <symbol id="i-cat" viewBox="0 0 24 24"><path d="M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM17 13v8M13 17h8"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><path d="M12 2l8 3v6c0 5-3.500 9-8 11-4.500-2-8-6-8-11V5z"/><path d="M9 12l2 2 4-4"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.900 4.900l1.400 1.400M17.700 17.700l1.400 1.400M2 12h2M20 12h2M4.900 19.100l1.400-1.400M17.700 6.300l1.400-1.400"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 13A9 9 0 1111 3a7 7 0 0010 10z"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3"/></symbol>
+  <symbol id="i-out" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+  <symbol id="i-bal" viewBox="0 0 24 24"><path d="M3 7h18v12H3zM3 7l3-4h12l3 4M16 13h2"/></symbol>
+</defs></svg>
 
 <section id="login" class="screen hidden">
   <form class="card login-card" id="loginForm" autocomplete="on">
@@ -25,46 +44,53 @@
 </section>
 
 <div id="app" class="hidden">
-  <header class="top">
-    <div class="brand"><span class="logo sm">₮</span> حسابداری ساده</div>
+  <aside class="side">
+    <div class="brand"><span class="logo sm">₮</span><span class="brand-t">حسابداری ساده</span></div>
     <nav id="tabs">
-      <button data-tab="dash" class="active">داشبورد</button>
-      <button data-tab="tx">تراکنش‌ها</button>
-      <button data-tab="inv">فاکتورها</button>
-      <button data-tab="cats">دسته‌بندی‌ها</button>
-      <button data-tab="users" data-role="owner">کاربران</button>
+      <button data-tab="dash" class="active"><svg class="ic"><use href="#i-dash"/></svg><span>داشبورد</span></button>
+      <button data-tab="tx"><svg class="ic"><use href="#i-tx"/></svg><span>تراکنش‌ها</span></button>
+      <button data-tab="inv"><svg class="ic"><use href="#i-inv"/></svg><span>فاکتورها</span></button>
+      <button data-tab="crm"><svg class="ic"><use href="#i-crm"/></svg><span>مشتریان</span></button>
+      <button data-tab="cats"><svg class="ic"><use href="#i-cat"/></svg><span>دسته‌ها</span></button>
+      <button data-tab="users" data-role="owner"><svg class="ic"><use href="#i-users"/></svg><span>کاربران</span></button>
     </nav>
-    <div class="me">
-      <span id="meName"></span><span class="badge" id="meRole"></span>
-      <button class="btn ghost sm" id="pwBtn" title="تغییر رمز">🔑</button>
-      <button class="btn ghost sm" id="logoutBtn">خروج</button>
+    <div class="side-foot">
+      <div class="usercard"><span class="avatar" id="meAv"></span><div><b id="meName"></b><span class="badge" id="meRole"></span></div></div>
+      <div class="tools">
+        <button class="iconbtn" id="themeBtn" title="تغییر تم"><svg class="ic"><use href="#i-moon"/></svg></button>
+        <button class="iconbtn" id="pwBtn" title="تغییر رمز"><svg class="ic"><use href="#i-key"/></svg></button>
+        <button class="iconbtn" id="logoutBtn" title="خروج"><svg class="ic"><use href="#i-out"/></svg></button>
+      </div>
     </div>
-  </header>
+  </aside>
 
   <main>
     <section id="tab-dash" class="tab">
-      <div class="toolbar">
-        <div class="chips" id="range">
-          <button data-r="month" class="active">این ماه</button>
-          <button data-r="30">۳۰ روز اخیر</button>
-          <button data-r="year">امسال</button>
-          <button data-r="all">همه</button>
-        </div>
-        <button class="btn primary write-only" data-new>＋ ثبت تراکنش</button>
+      <div class="head"><div><h2 class="h2" id="greet">داشبورد</h2><p class="muted sub" id="todayLine"></p></div>
+        <button class="btn primary write-only" data-new><svg class="ic"><use href="#i-plus"/></svg> ثبت تراکنش</button></div>
+      <div class="chips" id="range">
+        <button data-r="month" class="active">این ماه</button><button data-r="30">۳۰ روز اخیر</button><button data-r="year">امسال</button><button data-r="all">همه</button>
       </div>
       <div class="stats">
-        <div class="card stat in"><span>مجموع ورودی</span><b id="sIn">0</b><small>تومان</small></div>
-        <div class="card stat out"><span>مجموع خروجی</span><b id="sOut">0</b><small>تومان</small></div>
-        <div class="card stat bal"><span>مانده</span><b id="sBal">0</b><small>تومان</small></div>
+        <div class="card stat in"><span class="sico"><svg class="ic"><use href="#i-down"/></svg></span><span class="sl">مجموع ورودی</span><b id="sIn">0</b><small>تومان</small></div>
+        <div class="card stat out"><span class="sico"><svg class="ic"><use href="#i-up"/></svg></span><span class="sl">مجموع خروجی</span><b id="sOut">0</b><small>تومان</small></div>
+        <div class="card stat bal"><span class="sico"><svg class="ic"><use href="#i-bal"/></svg></span><span class="sl">مانده</span><b id="sBal">0</b><small>تومان</small></div>
+        <div class="card stat due"><span class="sico"><svg class="ic"><use href="#i-inv"/></svg></span><span class="sl">مطالبات (فاکتور پرداخت‌نشده)</span><b id="sDue">0</b><small>تومان</small></div>
       </div>
       <div class="grid2">
-        <div class="card"><h3>ورودی و خروجی (روزانه/ماهانه)</h3><div id="barChart" class="chart"></div></div>
+        <div class="card"><h3>ورودی و خروجی</h3><div id="barChart" class="chart"></div></div>
         <div class="card"><h3>هزینه‌ها به تفکیک علت</h3><div id="donut" class="donut-wrap"></div></div>
       </div>
-      <div class="card"><h3>آخرین تراکنش‌ها</h3><div id="recent"></div></div>
+      <div class="grid2 even">
+        <div class="card"><h3>پیگیری‌های امروز و عقب‌افتاده</h3><div id="dFollow" class="mini"></div></div>
+        <div class="card"><h3>بیشترین بدهکاران</h3><div id="dDebt" class="mini"></div></div>
+      </div>
+      <div class="card"><h3>آخرین تراکنش‌ها</h3><div id="recent" class="tablewrap"></div></div>
     </section>
 
     <section id="tab-tx" class="tab hidden">
+      <div class="head"><div><h2 class="h2">تراکنش‌ها</h2><p class="muted sub">همه ورودی‌ها و خروجی‌ها</p></div>
+        <button class="btn primary write-only" data-new><svg class="ic"><use href="#i-plus"/></svg> ثبت تراکنش</button></div>
       <div class="toolbar wrap">
         <input id="fq" placeholder="جستجو در طرف حساب / توضیحات / شماره سند">
         <select id="ftype"><option value="">همه</option><option value="income">ورودی</option><option value="expense">خروجی</option></select>
@@ -73,22 +99,27 @@
         <label class="inl">تا <span class="jdate" id="fto"></span></label>
         <button class="btn ghost" id="fclear">پاک کردن</button>
         <a class="btn ghost" id="csv" href="#">⬇ خروجی اکسل</a>
-        <button class="btn primary write-only" data-new>＋ ثبت</button>
       </div>
       <div class="card nopad"><div class="tablewrap"><table id="txTable"></table></div></div>
       <div class="pager"><button class="btn ghost sm" id="more" hidden>نمایش بیشتر</button><span class="muted" id="txInfo"></span></div>
     </section>
 
     <section id="tab-inv" class="tab hidden">
-      <div class="toolbar">
-        <h2 class="h2">فاکتورها</h2>
-        <div class="row"><button class="btn ghost owner-only" id="bizBtn">⚙ اطلاعات کسب‌وکار</button><button class="btn primary write-only" id="newInv">＋ صدور فاکتور</button></div>
-      </div>
+      <div class="head"><div><h2 class="h2">فاکتورها</h2><p class="muted sub">صدور، چاپ و ثبت دریافت وجه</p></div>
+        <div class="row"><button class="btn ghost owner-only" id="bizBtn">⚙ اطلاعات کسب‌وکار</button><button class="btn primary write-only" id="newInv"><svg class="ic"><use href="#i-plus"/></svg> صدور فاکتور</button></div></div>
       <div class="card nopad"><div class="tablewrap"><table id="invTable"></table></div></div>
     </section>
 
+    <section id="tab-crm" class="tab hidden">
+      <div class="head"><div><h2 class="h2">مشتریان</h2><p class="muted sub">مدیریت ارتباط با مشتری و پیگیری‌ها</p></div>
+        <button class="btn primary write-only" id="newCust"><svg class="ic"><use href="#i-plus"/></svg> مشتری جدید</button></div>
+      <div class="toolbar wrap"><input id="cq" placeholder="جستجو: نام، شرکت، تلفن، ایمیل"><div class="chips" id="cStatus"></div></div>
+      <div class="card nopad"><div class="tablewrap"><table id="custTable"></table></div></div>
+    </section>
+
     <section id="tab-cats" class="tab hidden">
-      <div class="grid2">
+      <div class="head"><div><h2 class="h2">دسته‌بندی‌ها</h2><p class="muted sub">علت‌های ورودی و خروجی</p></div></div>
+      <div class="grid2 even">
         <div class="card"><h3>علت‌های ورودی</h3><ul class="cats" id="catIn"></ul></div>
         <div class="card"><h3>علت‌های خروجی</h3><ul class="cats" id="catOut"></ul></div>
       </div>
@@ -100,6 +131,7 @@
     </section>
 
     <section id="tab-users" class="tab hidden">
+      <div class="head"><div><h2 class="h2">کاربران</h2><p class="muted sub">سطح دسترسی و گزارش فعالیت‌ها</p></div></div>
       <div class="card nopad"><div class="tablewrap"><table id="userTable"></table></div></div>
       <form class="card inline-form" id="userForm">
         <input name="name" placeholder="نام نمایشی" required>

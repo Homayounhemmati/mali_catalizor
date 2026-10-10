@@ -5,6 +5,9 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const fa = (n) => Number(n).toLocaleString('fa-IR');
 const ROLES = { owner: 'مدیر', accountant: 'حسابدار', partner: 'شریک' };
 const METHODS = { cash: 'نقد', card: 'کارت', transfer: 'انتقال بانکی', cheque: 'چک', other: 'سایر' };
+const STATUS = { lead: 'سرنخ', active: 'فعال', vip: 'ویژه', inactive: 'غیرفعال' };
+const KINDS = { note: '📝 یادداشت', call: '📞 تماس', meeting: '🤝 جلسه', message: '💬 پیام' };
+const initial = (n) => (String(n || '?').trim()[0] || '?');
 const MONTHS = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
 
 // ---------- تاریخ شمسی ----------
@@ -104,7 +107,8 @@ document.addEventListener('keydown', (e) => e.key === 'Escape' && closeModal());
 let cats = [];
 async function start() {
   $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
-  $('#meName').textContent = me.name; $('#meRole').textContent = ROLES[me.role];
+  $('#meName').textContent = me.name; $('#meRole').textContent = ROLES[me.role]; $('#meAv').textContent = initial(me.name);
+  const hr = new Date().getHours(); $('#greet').textContent = `${hr < 12 ? 'صبح بخیر' : hr < 18 ? 'روز بخیر' : 'عصر بخیر'}، ${me.name}`; $('#todayLine').textContent = 'امروز ' + showDate(todayIso());
   document.body.classList.toggle('readonly', me.role === 'partner'); document.body.classList.toggle('is-owner', me.role === 'owner');
   $$('[data-role=owner]').forEach((b) => b.classList.toggle('hidden', me.role !== 'owner'));
   await loadCats(); goTab('dash');
@@ -128,7 +132,7 @@ function goTab(t) {
   tab = t;
   $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
   $$('.tab').forEach((s) => { const on = s.id === 'tab-' + t; s.classList.toggle('hidden', !on); });
-  ({ dash: loadDash, tx: () => loadTx(true), users: loadUsers, cats: () => {}, inv: loadInv })[t]();
+  ({ dash: loadDash, tx: () => loadTx(true), users: loadUsers, cats: () => {}, inv: loadInv, crm: loadCrm })[t]();
 }
 $$('[data-new]').forEach((b) => (b.onclick = () => txModal()));
 
@@ -152,8 +156,8 @@ function rangeQuery() {
 const qs = (o) => '?' + new URLSearchParams(Object.fromEntries(Object.entries(o).filter(([, v]) => v !== '' && v != null))).toString();
 const PALETTE = ['#7c8cff', '#ff6b81', '#2ee59d', '#ffb454', '#b47cff', '#4cc9f0', '#f78fb3', '#a3e635'];
 const loadDash = guard(async () => {
-  const q = rangeQuery(), [s, tx] = await Promise.all([api('/summary' + qs(q)), api('/transactions' + qs({ ...q, limit: 8 }))]);
-  countUp($('#sIn'), s.income); countUp($('#sOut'), s.expense); countUp($('#sBal'), s.balance);
+  const q = rangeQuery(), [s, tx, ov] = await Promise.all([api('/summary' + qs(q)), api('/transactions' + qs({ ...q, limit: 8 })), api('/crm/overview?today=' + todayIso())]);
+  countUp($('#sDue'), ov.totalDue); countUp($('#sIn'), s.income); countUp($('#sOut'), s.expense); countUp($('#sBal'), s.balance);
   // نمودار: روزانه برای بازه کوتاه، ماهانه برای بقیه
   const monthly = range === 'year' || range === 'all', groups = new Map();
   s.byDay.forEach((r) => { const [y, m, d] = jOf(r.date), k = monthly ? `${y}-${pad(m)}` : r.date, label = monthly ? MONTHS[m - 1] : fa(d); const g = groups.get(k) || { label, inc: 0, exp: 0 }; g.inc += r.inc; g.exp += r.exp; groups.set(k, g); });
@@ -171,6 +175,10 @@ const loadDash = guard(async () => {
       <div class="legend">${ex.map((c, i) => `<div style="animation-delay:${i * 80}ms"><i style="background:${PALETTE[i % 8]}"></i>${esc(c.name)}<em>${fa(Math.round(c.total / tot * 100))}٪</em></div>`).join('')}</div>`;
   }
   $('#recent').innerHTML = txTable(tx.rows, false);
+  const td = todayIso();
+  $('#dFollow').innerHTML = ov.followups.length ? ov.followups.map((c, i) => `<div class="mrow" data-cust="${c.id}" style="animation-delay:${i * 50}ms"><span class="avatar">${esc(initial(c.name))}</span><div class="grow"><b>${esc(c.name)}</b><small>${esc(c.company || c.phone || '')}</small></div><span class="status ${c.follow_up < td ? 'late' : 'today'}">${c.follow_up < td ? 'عقب‌افتاده ' + showDate(c.follow_up) : 'امروز'}</span></div>`).join('') : '<div class="empty">پیگیری عقب‌افتاده‌ای نیست 🎉</div>';
+  $('#dDebt').innerHTML = ov.debtors.length ? ov.debtors.map((c, i) => `<div class="mrow" data-cust="${c.id}" style="animation-delay:${i * 50}ms"><span class="avatar">${esc(initial(c.name))}</span><div class="grow"><b>${esc(c.name)}</b><small>${esc(c.company || c.phone || '')}</small></div><span class="amt expense">${fa(c.due)}</span></div>`).join('') : '<div class="empty">بدهی معوقی وجود ندارد</div>';
+  $$('[data-cust]', $('#tab-dash')).forEach((el) => (el.onclick = () => openCustomer(el.dataset.cust)));
 });
 
 // ---------- جدول تراکنش‌ها ----------
@@ -245,7 +253,7 @@ const loadUsers = guard(async () => {
   $$('[data-role]', $('#userTable')).forEach((s) => (s.onchange = guard(async () => { await api('/users/' + s.dataset.role, { method: 'PUT', body: { role: s.value } }); toast('نقش تغییر کرد'); })));
   $$('[data-toggle]').forEach((b) => (b.onclick = guard(async () => { await api('/users/' + b.dataset.toggle, { method: 'PUT', body: { active: b.dataset.on !== '1' } }); loadUsers(); })));
   $$('[data-reset]').forEach((b) => (b.onclick = guard(async () => { const p = prompt('رمز جدید (حداقل ۶ کاراکتر):'); if (!p) return; await api('/users/' + b.dataset.reset, { method: 'PUT', body: { password: p } }); toast('رمز تغییر کرد'); })));
-  const log = await api('/audit'), L = { login: 'ورود', password: 'تغییر رمز', 'tx.create': 'ثبت تراکنش', 'tx.update': 'ویرایش تراکنش', 'tx.delete': 'حذف تراکنش', 'user.create': 'افزودن کاربر', 'user.update': 'ویرایش کاربر', 'invoice.create': 'صدور فاکتور', 'invoice.update': 'ویرایش فاکتور', 'invoice.delete': 'حذف فاکتور', 'invoice.pay': 'ثبت پرداخت فاکتور' };
+  const log = await api('/audit'), L = { login: 'ورود', password: 'تغییر رمز', 'tx.create': 'ثبت تراکنش', 'tx.update': 'ویرایش تراکنش', 'tx.delete': 'حذف تراکنش', 'user.create': 'افزودن کاربر', 'user.update': 'ویرایش کاربر', 'customer.create': 'افزودن مشتری', 'customer.update': 'ویرایش مشتری', 'customer.delete': 'حذف مشتری', 'invoice.create': 'صدور فاکتور', 'invoice.update': 'ویرایش فاکتور', 'invoice.delete': 'حذف فاکتور', 'invoice.pay': 'ثبت پرداخت فاکتور' };
   $('#auditList').innerHTML = log.map((a) => `<div><b>${esc(a.who || '—')}</b>${L[a.action] || esc(a.action)}<span style="margin-inline-start:auto" dir="ltr">${esc(a.at)}</span></div>`).join('') || '<div class="empty">—</div>';
 });
 $('#userForm').onsubmit = guard(async (e) => {
@@ -264,11 +272,11 @@ const loadInv = guard(async () => {
     <td class="act"><button data-view="${v.id}" title="مشاهده و چاپ">🖨</button>${canW && v.status === 'unpaid' ? `<button data-pay="${v.id}" title="ثبت دریافت وجه">✔ دریافت شد</button><button data-editinv="${v.id}" title="ویرایش">✎</button>` : ''}${me.role === 'owner' ? `<button class="del" data-delinv="${v.id}" title="حذف">🗑</button>` : ''}</td></tr>`).join('')}</tbody>` : '<tbody><tr><td><div class="empty">هنوز فاکتوری صادر نشده</div></td></tr></tbody>';
   const byId = (id) => invs.find((x) => x.id == id);
   $$('[data-view]', $('#invTable')).forEach((b) => (b.onclick = () => invView(byId(b.dataset.view))));
-  $$('[data-editinv]', $('#invTable')).forEach((b) => (b.onclick = () => invModal(byId(b.dataset.editinv))));
+  $$('[data-editinv]', $('#invTable')).forEach((b) => (b.onclick = guard(() => invModal(byId(b.dataset.editinv)))));
   $$('[data-pay]', $('#invTable')).forEach((b) => (b.onclick = () => payModal(byId(b.dataset.pay))));
   $$('[data-delinv]', $('#invTable')).forEach((b) => (b.onclick = guard(async () => { if (!confirm('فاکتور حذف شود؟ (تراکنش مالی ثبت‌شده حذف نمی‌شود)')) return; await api('/invoices/' + b.dataset.delinv, { method: 'DELETE' }); toast('حذف شد'); loadInv(); })));
 });
-$('#newInv').onclick = () => invModal();
+$('#newInv').onclick = guard(() => invModal());
 $('#bizBtn').onclick = guard(async () => {
   biz = await api('/settings');
   modal(`<h2>اطلاعات کسب‌وکار (بالای فاکتور)</h2><form class="form" id="bizForm">
@@ -280,12 +288,15 @@ $('#bizBtn').onclick = guard(async () => {
   (s) => { $('#bizForm', s).onsubmit = guard(async (e) => { e.preventDefault(); await api('/settings', { method: 'PUT', body: Object.fromEntries(new FormData(e.target)) }); closeModal(); toast('ذخیره شد'); }); });
 });
 const num = (v) => Number(String(v).replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/[^\d.]/g, '')) || 0;
-function invModal(inv) {
+async function invModal(inv, preset) {
+  const custs = (await api('/customers')).rows, pre = inv?.customer_id ? custs.find((c) => c.id === inv.customer_id) : preset;
   modal(`<h2>${inv ? 'ویرایش فاکتور ' + fa(inv.number).replace(/٬/g, '') : 'صدور فاکتور جدید'}</h2><form class="form" id="invForm">
-    <label>نام مشتری<input name="customer" required maxlength="120" value="${esc(inv?.customer)}"></label>
+    <label>مشتری<select name="customer_id"><option value="">— مشتری جدید / ثبت دستی —</option>${custs.map((c) => `<option value="${c.id}" ${pre && pre.id === c.id ? 'selected' : ''}>${esc(c.name)}${c.company ? ' — ' + esc(c.company) : ''}</option>`).join('')}</select></label>
     <label>تاریخ<div class="jdate" id="idate"></div></label>
-    <label>تلفن<input name="phone" dir="ltr" maxlength="40" value="${esc(inv?.phone)}"></label>
-    <label>آدرس<input name="address" maxlength="300" value="${esc(inv?.address)}"></label>
+    <label>نام روی فاکتور<input name="customer" required maxlength="120" value="${esc(inv?.customer || pre?.name)}"></label>
+    <label>تلفن<input name="phone" dir="ltr" maxlength="40" value="${esc(inv?.phone || pre?.phone)}"></label>
+    <label class="full">آدرس<input name="address" maxlength="300" value="${esc(inv?.address || pre?.address)}"></label>
+    <label class="chk full" id="saveCust"><input type="checkbox" name="save_cust" checked> افزودن این مشتری به لیست مشتریان (برای پیگیری و سابقه)</label>
     <div class="full"><div class="itemhead"><span>شرح کالا / خدمت</span><span>تعداد</span><span>قیمت واحد</span><span>جمع</span><span></span></div><div class="items" id="items"></div>
       <button type="button" class="btn ghost sm" id="addItem" style="margin-top:8px">＋ افزودن ردیف</button></div>
     <label>تخفیف (تومان)<input name="discount" inputmode="numeric" dir="ltr" value="${inv ? inv.discount : ''}"></label>
@@ -295,7 +306,12 @@ function invModal(inv) {
     <div class="form-actions full"><button type="button" class="btn ghost" data-close>انصراف</button><button class="btn primary">${inv ? 'ذخیره' : 'صدور فاکتور'}</button></div></form>`,
   (s) => {
     $('#sheet').classList.add('wide');
-    const f = $('#invForm', s), box = $('#items', s), dp = $('#idate', s); datePicker(dp, inv ? inv.date : todayIso());
+    const f = $('#invForm', s), syncCust = (fill) => {
+      const c = custs.find((x) => x.id == f.customer_id.value); $('#saveCust', s).style.display = c ? 'none' : '';
+      if (c && fill) { f.customer.value = c.name; f.phone.value = c.phone || ''; f.address.value = c.address || ''; }
+    };
+    f.customer_id.onchange = () => syncCust(true); syncCust(false);
+    const box = $('#items', s), dp = $('#idate', s); datePicker(dp, inv ? inv.date : todayIso());
     const calc = () => {
       const rows = $$('.item', box).map((r) => ({ q: num($('[data-q]', r).value), p: num($('[data-p]', r).value), el: $('.ln', r) }));
       let sub = 0; rows.forEach((r) => { const l = Math.round(r.q * r.p); r.el.textContent = fa(l); sub += l; });
@@ -315,7 +331,9 @@ function invModal(inv) {
     f.onsubmit = guard(async (e) => {
       e.preventDefault(); const d = dp.get(); if (!d) throw new Error('تاریخ را کامل انتخاب کنید');
       const items = $$('.item', box).map((r) => ({ title: $('[data-t]', r).value, qty: num($('[data-q]', r).value), price: num($('[data-p]', r).value) })).filter((i) => i.title.trim());
-      const body = { customer: f.customer.value, phone: f.phone.value, address: f.address.value, date: d, items, discount: num(f.discount.value), tax_percent: num(f.tax_percent.value), note: f.note.value };
+      let cid = f.customer_id.value ? +f.customer_id.value : null;
+      if (!cid && !inv && f.save_cust.checked && f.customer.value.trim()) cid = (await api('/customers', { method: 'POST', body: { name: f.customer.value, phone: f.phone.value, address: f.address.value, status: 'lead' } })).id;
+      const body = { customer_id: cid, customer: f.customer.value, phone: f.phone.value, address: f.address.value, date: d, items, discount: num(f.discount.value), tax_percent: num(f.tax_percent.value), note: f.note.value };
       const saved = await api(inv ? '/invoices/' + inv.id : '/invoices', { method: inv ? 'PUT' : 'POST', body });
       toast(inv ? 'فاکتور ذخیره شد' : 'فاکتور صادر شد'); await loadInv(); invView(saved);
     });
@@ -343,5 +361,91 @@ function invView(v) {
     s.classList.add('wide'); $('#doPrint', s).onclick = () => { $('#printArea').innerHTML = paperHtml(v); window.print(); };
   });
 }
+// ---------- مشتریان (CRM) ----------
+let cStat = '';
+const fuBadge = (d) => { if (!d) return '<span class="muted">—</span>'; const t = todayIso(); return `<span class="status ${d < t ? 'late' : d === t ? 'today' : 'later'}">${d < t ? 'عقب‌افتاده · ' : d === t ? 'امروز · ' : ''}${showDate(d)}</span>`; };
+const loadCrm = guard(async () => {
+  const r = await api('/customers' + qs({ q: $('#cq').value.trim(), status: cStat })), canW = me.role !== 'partner';
+  const total = Object.values(r.counts).reduce((a, b) => a + b, 0);
+  $('#cStatus').innerHTML = [['', 'همه', total], ...Object.entries(STATUS).map(([k, v]) => [k, v, r.counts[k] || 0])].map(([k, v, n]) => `<button data-s="${k}" class="${k === cStat ? 'active' : ''}">${v}<em>${fa(n)}</em></button>`).join('');
+  $('#custTable').innerHTML = r.rows.length ? `<thead><tr><th>مشتری</th><th>تماس</th><th>وضعیت</th><th>مانده بدهی</th><th>پیگیری بعدی</th><th></th></tr></thead><tbody>${r.rows.map((c, i) => `
+    <tr class="click" data-open="${c.id}" style="animation-delay:${Math.min(i, 15) * 30}ms"><td><div class="cname"><span class="avatar">${esc(initial(c.name))}</span><div><b>${esc(c.name)}</b><small>${esc(c.company || '')}</small></div></div></td>
+    <td dir="ltr" style="text-align:right">${esc(c.phone || '—')}</td><td><span class="status st-${c.status}">${STATUS[c.status]}</span></td>
+    <td class="amt ${c.due ? 'expense' : ''}">${c.due ? fa(c.due) : '—'}</td><td>${fuBadge(c.follow_up)}</td>
+    <td class="act">${canW ? `<button data-ec="${c.id}" title="ویرایش">✎</button>` : ''}${me.role === 'owner' ? `<button class="del" data-dc="${c.id}" title="حذف">🗑</button>` : ''}</td></tr>`).join('')}</tbody>`
+    : `<tbody><tr><td><div class="empty">${cStat || $('#cq').value ? 'مشتری‌ای پیدا نشد' : 'هنوز مشتری ثبت نشده. اولین مشتری را اضافه کنید.'}</div></td></tr></tbody>`;
+  const byId = (id) => r.rows.find((x) => x.id == id), T = $('#custTable');
+  $$('[data-open]', T).forEach((tr) => (tr.onclick = (e) => { if (!e.target.closest('.act')) openCustomer(tr.dataset.open); }));
+  $$('[data-ec]', T).forEach((b) => (b.onclick = () => custModal(byId(b.dataset.ec))));
+  $$('[data-dc]', T).forEach((b) => (b.onclick = guard(async () => { if (!confirm('مشتری و تاریخچه یادداشت‌هایش حذف شود؟ (فاکتورها باقی می‌مانند)')) return; await api('/customers/' + b.dataset.dc, { method: 'DELETE' }); toast('حذف شد'); loadCrm(); })));
+});
+$('#cStatus').onclick = (e) => { const b = e.target.closest('button'); if (b) { cStat = b.dataset.s; loadCrm(); } };
+let cDeb; $('#cq').oninput = () => { clearTimeout(cDeb); cDeb = setTimeout(loadCrm, 300); };
+$('#newCust').onclick = () => custModal();
+const refreshCrm = () => { if (tab === 'crm') loadCrm(); if (tab === 'dash') loadDash(); };
+
+function custModal(c) {
+  modal(`<h2>${c ? 'ویرایش مشتری' : 'مشتری جدید'}</h2><form class="form" id="custForm">
+    <label>نام و نام خانوادگی<input name="name" required maxlength="120" value="${esc(c?.name)}"></label>
+    <label>شرکت / برند<input name="company" maxlength="120" value="${esc(c?.company)}"></label>
+    <label>تلفن<input name="phone" dir="ltr" maxlength="40" value="${esc(c?.phone)}"></label>
+    <label>ایمیل<input name="email" dir="ltr" maxlength="120" value="${esc(c?.email)}"></label>
+    <label>وضعیت<select name="status">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${(c?.status || 'lead') === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+    <label>نحوه آشنایی<input name="source" list="srcs" maxlength="60" placeholder="معرفی، اینستاگرام، سایت…" value="${esc(c?.source)}"><datalist id="srcs"><option>معرفی دوستان</option><option>اینستاگرام</option><option>وب‌سایت</option><option>تماس تلفنی</option><option>نمایشگاه</option></datalist></label>
+    <label class="full">آدرس<input name="address" maxlength="300" value="${esc(c?.address)}"></label>
+    <label class="full">پیگیری بعدی (اختیاری)<div class="jdate" id="cfu"></div></label>
+    <label class="full">توضیحات<textarea name="note" rows="2" maxlength="1000">${esc(c?.note)}</textarea></label>
+    <div class="form-actions full"><button type="button" class="btn ghost" data-close>انصراف</button><button class="btn primary">${c ? 'ذخیره' : 'افزودن مشتری'}</button></div></form>`,
+  (s) => {
+    const f = $('#custForm', s), dp = $('#cfu', s); datePicker(dp, c?.follow_up || '');
+    f.onsubmit = guard(async (e) => {
+      e.preventDefault(); const body = Object.fromEntries(new FormData(f)); body.follow_up = dp.get();
+      const r = await api(c ? '/customers/' + c.id : '/customers', { method: c ? 'PUT' : 'POST', body });
+      toast(c ? 'ذخیره شد' : 'مشتری اضافه شد'); refreshCrm(); c ? openCustomer(c.id) : openCustomer(r.id);
+    });
+  });
+}
+
+const openCustomer = guard(async (id) => {
+  const c = await api('/customers/' + id), canW = me.role !== 'partner', td = todayIso();
+  const events = [
+    ...c.notes.map((n) => ({ k: n.created_at.slice(0, 10), html: `<div class="ev ${n.kind}"><div class="t"><b>${KINDS[n.kind]}</b> · ${showDate(n.created_at.slice(0, 10))} · ${esc(n.author || '')}${canW && (me.role === 'owner' || n.created_by === me.id) ? `<button data-dn="${n.id}" title="حذف">✕</button>` : ''}</div><p>${esc(n.text)}</p></div>` })),
+    ...c.invoices.map((v) => ({ k: v.date, html: `<div class="ev inv"><div class="t"><b>🧾 فاکتور ${fa(v.number).replace(/٬/g, '')}</b> · ${showDate(v.date)}</div><p>${fa(v.total)} تومان — <span class="status ${v.status}">${v.status === 'paid' ? 'پرداخت شده' : 'پرداخت نشده'}</span> <button class="btn ghost sm" data-vi="${v.id}">مشاهده</button></p></div>` })),
+  ].sort((a, b) => (a.k < b.k ? 1 : a.k > b.k ? -1 : 0));
+  modal(`<div class="cust-head"><span class="avatar">${esc(initial(c.name))}</span><div class="grow"><h2>${esc(c.name)}</h2><small class="muted">${esc(c.company || '')}</small></div>
+    ${canW ? `<select id="cst">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${c.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select>` : `<span class="status st-${c.status}">${STATUS[c.status]}</span>`}
+    ${canW ? '<button class="btn ghost sm" id="cEdit">✎ ویرایش</button><button class="btn primary sm" id="cInv">＋ فاکتور</button>' : ''}<button class="btn ghost sm" data-close>✕</button></div>
+  <div class="info">${c.phone ? `<div><span>تلفن</span><a href="tel:${esc(c.phone)}" dir="ltr">${esc(c.phone)}</a></div>` : ''}${c.email ? `<div><span>ایمیل</span><a href="mailto:${esc(c.email)}" dir="ltr">${esc(c.email)}</a></div>` : ''}${c.address ? `<div><span>آدرس</span>${esc(c.address)}</div>` : ''}${c.source ? `<div><span>نحوه آشنایی</span>${esc(c.source)}</div>` : ''}${c.note ? `<div style="grid-column:1/-1"><span>توضیحات</span>${esc(c.note)}</div>` : ''}</div>
+  <div class="minis"><div><b>${fa(c.invoiced)}</b><span>کل فاکتورها (تومان)</span></div><div><b style="color:var(--in)">${fa(c.paid)}</b><span>پرداخت‌شده</span></div><div><b style="color:${c.due ? 'var(--out)' : 'inherit'}">${fa(c.due)}</b><span>مانده بدهی</span></div></div>
+  <div class="fu">🔔 پیگیری بعدی: ${fuBadge(c.follow_up)}${canW ? `<span style="margin-inline-start:auto" class="row"><span class="jdate" id="fuPick"></span><button class="btn sm" id="fuSave">ذخیره</button>${c.follow_up ? '<button class="btn ghost sm" id="fuDone">✔ انجام شد</button>' : ''}</span>` : ''}</div>
+  ${canW ? `<form class="notef" id="noteForm"><textarea name="text" rows="2" maxlength="1000" placeholder="یادداشت، خلاصه تماس یا جلسه…" required></textarea><div class="r"><select name="kind">${Object.entries(KINDS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select><button class="btn primary sm">ثبت در تاریخچه</button></div></form>` : ''}
+  <h3 class="muted" style="font-size:14px;margin:6px 0 12px">تاریخچه</h3>
+  <div class="timeline">${events.map((e, i) => e.html.replace('class="ev', `style="animation-delay:${Math.min(i, 10) * 40}ms" class="ev`)).join('') || '<div class="empty">هنوز سابقه‌ای ثبت نشده</div>'}</div>`,
+  (s) => {
+    $('#sheet').classList.add('wide'); const done = () => { refreshCrm(); openCustomer(id); };
+    const put = (body) => api('/customers/' + id, { method: 'PUT', body });
+    if (canW) {
+      $('#cst', s).onchange = guard(async (e) => { await put({ status: e.target.value }); toast('وضعیت تغییر کرد'); done(); });
+      $('#cEdit', s).onclick = () => custModal(c);
+      $('#cInv', s).onclick = guard(() => { closeModal(); return invModal(null, c); });
+      const fp = $('#fuPick', s); datePicker(fp, c.follow_up || '');
+      $('#fuSave', s).onclick = guard(async () => { if (!fp.get()) throw new Error('تاریخ را کامل انتخاب کنید'); await put({ follow_up: fp.get() }); toast('پیگیری ثبت شد'); done(); });
+      const fd = $('#fuDone', s); if (fd) fd.onclick = guard(async () => { await put({ follow_up: '' }); toast('پیگیری انجام شد'); done(); });
+      $('#noteForm', s).onsubmit = guard(async (e) => { e.preventDefault(); const f = e.target; await api(`/customers/${id}/notes`, { method: 'POST', body: { text: f.text.value, kind: f.kind.value } }); toast('ثبت شد'); done(); });
+    }
+    $$('[data-dn]', s).forEach((b) => (b.onclick = guard(async () => { if (!confirm('این یادداشت حذف شود؟')) return; await api('/notes/' + b.dataset.dn, { method: 'DELETE' }); done(); })));
+    $$('[data-vi]', s).forEach((b) => (b.onclick = guard(async () => { biz = await api('/settings'); invView(c.invoices.find((x) => x.id == b.dataset.vi)); })));
+  });
+});
+
+// ---------- تم ----------
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t; try { localStorage.setItem('theme', t); } catch {}
+  $('#themeBtn use').setAttribute('href', t === 'dark' ? '#i-sun' : '#i-moon');
+  $('meta[name=theme-color]').content = t === 'dark' ? '#0b1020' : '#eef1fa';
+}
+$('#themeBtn').onclick = () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+applyTheme(document.documentElement.dataset.theme);
+
 // ---------- بوت ----------
 api('/me').then((u) => { me = u; start(); }).catch(showLogin);
