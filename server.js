@@ -82,7 +82,7 @@ const readBody = (req) => new Promise((ok, no) => {
   req.on('end', () => { try { ok(d ? JSON.parse(d) : {}); } catch { no(new HttpError(400, 'JSON نامعتبر')); } });
 });
 const cookies = (req) => Object.fromEntries((req.headers.cookie || '').split(';').map((c) => c.trim().split('=')).filter((p) => p[0]).map(([k, ...v]) => [k, v.join('=')]));
-const isSecure = (req) => req.headers['x-forwarded-proto'] === 'https';
+const isSecure = (req) => process.env.COOKIE_SECURE === '1' || req.headers['x-forwarded-proto'] === 'https';
 const currentUser = (req) => {
   const t = cookies(req).sid; if (!t) return null;
   return db.prepare('SELECT u.id,u.username,u.name,u.role FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>? AND u.active=1').get(t, Date.now()) || null;

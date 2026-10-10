@@ -38,3 +38,20 @@ ADMIN_USER=admin ADMIN_PASS='رمز-قوی' npm start   # http://localhost:3000
 
 ## امنیت
 رمزها با scrypt هش می‌شوند، کوکی نشست HttpOnly/SameSite است (روی HTTPS خودکار Secure)، ورود ناموفق محدود می‌شود، و همه عملیات ثبت/ویرایش/حذف در لاگ می‌ماند.
+
+## استقرار روی سی‌پنل (Setup Node.js App)
+1. در سی‌پنل > Domains یک ساب‌دامین بسازید (مثلاً `finance.example.com`). سپس از پشتیبانی بخواهید SSL آن را فعال کنند.
+2. فایل‌های پروژه (`server.js`، `package.json`، پوشه `public`) را در یک پوشه **خارج از public_html** آپلود کنید، مثلاً `/home/USER/finance-app`.
+3. سی‌پنل > **Setup Node.js App** > Create Application:
+   - Node.js version: **22.13 یا بالاتر**
+   - Application mode: Production
+   - Application root: `finance-app`
+   - Application URL: همان ساب‌دامین
+   - Application startup file: `server.js`
+4. در همان صفحه، Environment variables اضافه کنید:
+   - `ADMIN_USER` = نام کاربری مدیر
+   - `ADMIN_PASS` = رمز قوی (فقط برای اولین اجرا)
+   - `DATA_DIR` = `/home/USER/finance-data` (خارج از public_html؛ دیتابیس اینجا ذخیره می‌شود)
+   - `COOKIE_SECURE` = `1`
+5. دکمه **Create/Restart** را بزنید و ساب‌دامین را باز کنید. (`npm install` لازم نیست؛ برنامه وابستگی ندارد.)
+6. بکاپ: پوشه `finance-data` را به‌طور منظم دانلود/بکاپ بگیرید.
