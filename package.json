@@ -1,0 +1,9 @@
+{
+  "name": "mali-catalizor",
+  "version": "1.0.0",
+  "description": "نرم‌افزار مالی ساده: ثبت ورودی و خروجی با سطح دسترسی",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=22.13" },
+  "license": "MIT"
+}
