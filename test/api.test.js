@@ -33,7 +33,14 @@ test('security headers & noindex', async () => {
   const r = await call('x', 'GET', '/');
   for (const h of ['content-security-policy', 'x-frame-options', 'x-content-type-options', 'permissions-policy', 'x-robots-tag']) assert.ok(r.headers.get(h), h);
   assert.match(r.headers.get('content-security-policy'), /script-src 'self'/);
-  assert.match((await call('x', 'GET', '/robots.txt')).body.toString(), /Disallow: \/api\//);
+  assert.match((await call('x', 'GET', '/robots.txt')).body.toString(), /Disallow: \/\n/, 'robots.txt blocks everything');
+  for (const ua of ['Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)', 'Mozilla/5.0 (compatible; bingbot/2.0)', 'GPTBot/1.1', 'ClaudeBot/1.0', 'Mozilla/5.0 (compatible; AhrefsBot/7.0)', 'TelegramBot (like TwitterBot)', 'WhatsApp/2.23', 'facebookexternalhit/1.1', 'Slackbot-LinkExpanding 1.0', 'DuckDuckBot/1.1']) {
+    const rb = await call('x', 'GET', '/', undefined, { headers: { 'User-Agent': ua } });
+    assert.equal(rb.status, 404, 'crawler gets 404: ' + ua); assert.ok(!/حسابداری|<html/i.test(rb.body.toString()), 'no page content leaks to crawlers');
+    assert.equal((await call('x', 'GET', '/app.js', undefined, { headers: { 'User-Agent': ua } })).status, 404);
+  }
+  assert.equal((await call('x', 'GET', '/', undefined, { headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) AppleWebKit/605.1.15 Safari/604.1' } })).status, 200, 'real browsers are unaffected');
+  assert.equal((await call('x', 'GET', '/healthz', undefined, { headers: { 'User-Agent': 'UptimeRobot/2.0' } })).status, 200, 'health check stays available');
   assert.match(r.headers.get('x-robots-tag'), /noindex/);
   assert.match((await call('x', 'GET', '/')).body.toString(), /<meta name="robots" content="noindex/);
   assert.match((await call('x', 'GET', '/api/me')).headers.get('x-robots-tag'), /noindex/, 'API responses are noindex too');

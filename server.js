@@ -957,6 +957,7 @@ async function api(req, res, url) {
 }
 
 const PUB = path.join(__dirname, 'public');
+const BOT_RE = /(bot\b|bot[\/ _-]|robot|crawl|spider|slurp|scrap|facebookexternalhit|embedly|preview|mediapartners|ia_archiver|archive\.org|semrush|ahrefs|mj12|dotbot|petalbot|bytespider|ccbot|gptbot|perplexity|diffbot|omgili|seznam|yandex|baidu|sogou|naver|apis-google|inspectiontool|googleother|feedfetcher|lighthouse|pagespeed|phantomjs|whatsapp|telegram|discord|twitter|linkedin|skypeuri|viber|pinterest|snapchat|vkshare|duckduck|googleweblight|nmap|zgrab|masscan|nikto)/i;
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'";
 function secHeaders(req, res) {
   const h = {
@@ -972,9 +973,11 @@ const server = http.createServer(async (req, res) => {
   secHeaders(req, res);
   let url; try { url = new URL(req.url, 'http://x'); } catch { return send(res, 400, { error: 'درخواست نامعتبر' }); }
   try {
-    // خزیدن صفحه ورود آزاد است تا ربات‌ها دستور noindex را ببینند (اگر خزیدن ممنوع باشد، noindex خوانده نمی‌شود)
-    if (url.pathname === '/robots.txt') return send(res, 200, 'User-agent: *\nDisallow: /api/\n', { 'Content-Type': 'text/plain; charset=utf-8' });
+    // لایه ۱: robots.txt همه را از خزیدن منع می‌کند (ربات‌های مؤدب اصلاً نمی‌آیند)
+    if (url.pathname === '/robots.txt') return send(res, 200, 'User-agent: *\nDisallow: /\n', { 'Content-Type': 'text/plain; charset=utf-8' });
     if (url.pathname === '/healthz') return send(res, 200, 'ok', { 'Content-Type': 'text/plain' });
+    // لایه ۲: هر ربات/خزنده/پیش‌نمایش‌گیر (گوگل، بینگ، هوش مصنوعی، تلگرام، واتساپ…) فقط ۴۰۴ می‌بیند، انگار این آدرس وجود ندارد
+    if (BOT_RE.test(String(req.headers['user-agent'] || ''))) return send(res, 404, 'Not Found', { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
     if (url.pathname.startsWith('/api/')) { res.setHeader('Cache-Control', 'no-store'); return await api(req, res, url); }
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { error: 'روش مجاز نیست' });
     let f = path.normalize(path.join(PUB, url.pathname === '/' ? 'index.html' : url.pathname));
