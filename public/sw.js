@@ -1,6 +1,6 @@
 'use strict';
 // سرویس‌ورکر: پوسته برنامه آفلاین باز می‌شود؛ داده‌ها (API) هرگز کش نمی‌شوند.
-const V = 'kz-v3', SHELL = ['/', '/theme.js', '/app.css', '/app.js', '/features.js', '/icon.svg', '/manifest.webmanifest', '/icon-192.png'];
+const V = 'kz-v4', SHELL = ['/', '/theme.js', '/app.css', '/app.js', '/features.js', '/icon.svg', '/manifest.webmanifest', '/icon-192.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(V).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== V).map((k) => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', (e) => {

@@ -1,6 +1,6 @@
-:root{--bg:#0b1020;--side:rgba(18,24,48,.72);--surface:rgba(255,255,255,.055);--surface2:rgba(255,255,255,.1);--line:rgba(255,255,255,.1);
---text:#e8ecf6;--muted:#93a0bd;--in:#2ee59d;--out:#ff6b81;--warn:#ffb454;--acc:#7c8cff;--acc2:#b47cff;--r:18px;--sheet:#131a33;--shadow:0 20px 50px -20px rgba(0,0,0,.6)}
-:root[data-theme=light]{--bg:#eef1fa;--side:rgba(255,255,255,.75);--surface:rgba(255,255,255,.72);--surface2:#fff;--line:rgba(20,30,70,.1);--text:#15203d;--muted:#667394;--in:#0fa968;--out:#e0314f;--warn:#d98a1c;--sheet:#f6f7fd;--shadow:0 20px 50px -24px rgba(40,50,110,.35)}
+:root{--bg:#0e131a;--side:#121922;--surface:#161d27;--surface2:#1d2631;--line:#2a3441;
+--text:#e6ebf1;--muted:#8d9aab;--in:#3fb97a;--out:#e5534b;--warn:#d4a024;--acc:#3b82c4;--acc2:#3b82c4;--purple:#9a86d8;--r:12px;--sheet:#151c26;--shadow:0 12px 32px -16px rgba(0,0,0,.7)}
+:root[data-theme=light]{--bg:#f2f4f7;--side:#ffffff;--surface:#ffffff;--surface2:#f7f9fb;--line:#dde3ea;--text:#18212c;--muted:#5d6b7b;--in:#17803f;--out:#c62f2f;--warn:#b57a00;--acc:#1f5fa8;--acc2:#1f5fa8;--purple:#6f58b8;--sheet:#ffffff;--shadow:0 12px 30px -18px rgba(24,40,64,.35)}
 *{box-sizing:border-box}
 html,body{margin:0}
 body{font-family:Vazirmatn,Tahoma,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;-webkit-font-smoothing:antialiased}
@@ -312,3 +312,48 @@ body{-webkit-tap-highlight-color:transparent;overscroll-behavior-y:none}
 @media print{.paper .cols2{grid-template-columns:1fr 1fr}.paper .kpis{grid-template-columns:repeat(3,1fr)}.paper.report{font-size:12px}}
 .tab,.mpanel{grid-template-columns:minmax(0,1fr)}
 @media(max-width:900px){.stats .stat:last-child:nth-child(odd){grid-column:1/-1}}
+
+/* ===== تم رسمی: تخت، آرام، بدون حباب و گرادیان ===== */
+.bg{display:none}
+.card{backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:none}
+.card:hover{box-shadow:none}
+.side{backdrop-filter:none;-webkit-backdrop-filter:none}
+.logo{background:var(--acc);box-shadow:none;border-radius:16px}.logo.sm{border-radius:10px}
+.btn{border-radius:9px}.btn:hover{transform:none;background:var(--surface2)}
+.btn.primary{background:var(--acc);box-shadow:none;border:0}.btn.primary:hover{background:color-mix(in srgb,var(--acc) 88%,#fff);box-shadow:none}
+.btn.ghost:hover{background:var(--surface2)}
+input,select,textarea{border-radius:9px}
+input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px color-mix(in srgb,var(--acc) 28%,transparent)}
+#tabs button{border-radius:9px}
+#tabs button.active{background:color-mix(in srgb,var(--acc) 16%,transparent);color:var(--text);box-shadow:none;font-weight:600;box-shadow:inset 3px 0 0 var(--acc)}
+[dir=rtl] #tabs button.active{box-shadow:inset -3px 0 0 var(--acc)}
+#tabs button.active .ic{color:var(--acc)}
+#tabs button:hover{transform:none}
+.stat::after{display:none}.stat:hover{transform:none;box-shadow:none;border-color:color-mix(in srgb,currentColor 40%,var(--line))}
+.stat .sico{border-radius:9px}
+.stat b{letter-spacing:-.2px}
+.chips{border-radius:10px}.chips button{border-radius:7px}.chips button.active{box-shadow:none;background:var(--acc);color:#fff}.chips button.active em{background:rgba(255,255,255,.22);color:#fff}
+.bar.i{background:var(--in)}.bar.o{background:var(--out)}.bar{border-radius:4px 4px 0 0}
+.mrow{border-radius:10px}.mrow:hover{transform:none;background:var(--surface2)}
+.acc-card{border-radius:10px}.acc-card.total{background:color-mix(in srgb,var(--acc) 14%,var(--surface));border-color:color-mix(in srgb,var(--acc) 35%,var(--line))}
+.avatar{border-radius:9px;color:var(--acc);background:var(--surface2)}
+.badge{background:color-mix(in srgb,var(--acc) 18%,transparent);color:var(--acc)}
+.status{border-radius:6px}.tag{border-radius:6px}
+.st-vip{--c:var(--warn)}.st-lead{--c:var(--acc)}.ev.meeting{--c:var(--purple)}
+.seg2 .pill{border-radius:8px}.seg2,.seg2 button{border-radius:10px}
+.sheet{border-radius:14px}.modal{backdrop-filter:none;background:rgba(6,10,16,.62)}
+#fab{background:var(--acc);box-shadow:0 8px 20px -6px rgba(0,0,0,.5);border-radius:16px}
+.att,.att img{border-radius:10px}.clip{border-radius:6px}
+tbody tr:hover{background:var(--surface2)}
+th{font-size:12.5px;letter-spacing:.2px}
+#toast div{border-radius:10px}
+@media(max-width:900px){#tabs button.active{background:none;box-shadow:none}#tabs button.active .ic{color:var(--acc);filter:none}#tabs button.active::after{background:var(--acc)}
+ .side{background:var(--bg)}#tabs{background:var(--side)}}
+/* فاکتور و گزارش چاپی: سرمه‌ای رسمی */
+.paper h1,.paper.report h3{color:#1c3556}.paper .hd{border-bottom-color:#1c3556}.paper th{background:#1c3556}
+.rbar i{background:#7f9bbd}.paper .stamp{border-color:#17803f;color:#17803f}
+.mini,.legend,.stats,.info,.audit,.trash{grid-template-columns:minmax(0,1fr)}
+.stats{grid-template-columns:repeat(auto-fit,minmax(min(210px,100%),1fr))}
+.info{grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr))}
+@media(max-width:900px){.stats{grid-template-columns:1fr 1fr}.mrow{flex-wrap:wrap}}
+@media(max-width:900px){[dir=rtl] #tabs button.active,#tabs button.active{box-shadow:none}}

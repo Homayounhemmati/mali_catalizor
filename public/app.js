@@ -164,7 +164,7 @@ function rangeQuery() {
   return {};
 }
 const qs = (o) => '?' + new URLSearchParams(Object.fromEntries(Object.entries(o).filter(([, v]) => v !== '' && v != null))).toString();
-const PALETTE = ['#7c8cff', '#ff6b81', '#2ee59d', '#ffb454', '#b47cff', '#4cc9f0', '#f78fb3', '#a3e635'];
+const PALETTE = ['#3b82c4', '#e5534b', '#3fb97a', '#d4a024', '#8d9aab', '#39b5c7', '#9a86d8', '#d9772b'];
 const loadDash = guard(async () => {
   const q = rangeQuery(), [s, tx, ov] = await Promise.all([api('/summary' + qs(q)), api('/transactions' + qs({ ...q, limit: 8 })), api('/crm/overview?today=' + todayIso())]);
   countUp($('#sDue'), ov.totalDue); countUp($('#sIn'), s.income); countUp($('#sOut'), s.expense); countUp($('#sBal'), s.balance);
@@ -500,7 +500,7 @@ const openCustomer = guard(async (id) => {
 function applyTheme(t) {
   document.documentElement.dataset.theme = t; try { localStorage.setItem('theme', t); } catch {}
   $('#themeBtn use').setAttribute('href', t === 'dark' ? '#i-sun' : '#i-moon');
-  $('meta[name=theme-color]').content = t === 'dark' ? '#0b1020' : '#eef1fa';
+  $('meta[name=theme-color]').content = t === 'dark' ? '#0e131a' : '#f2f4f7';
 }
 $('#themeBtn').onclick = () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
 applyTheme(document.documentElement.dataset.theme);
