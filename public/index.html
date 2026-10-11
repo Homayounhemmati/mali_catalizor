@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1020">
+<meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
+<meta name="googlebot" content="noindex, nofollow">
+<meta name="description" content="حسابداری کاتالیزور؛ مدیریت مالی، فاکتور و مشتریان">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="کاتالیزور">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="format-detection" content="telephone=no">
+<title>حسابداری کاتالیزور</title>
+<script src="/theme.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div id="splash"><div class="logo"><svg class="mark"><use href="#i-mark"/></svg></div></div>
+<div id="offline" class="hidden">اتصال اینترنت برقرار نیست</div>
+<div class="bg"><i></i><i></i><i></i></div>
+<svg width="0" height="0" style="position:absolute"><defs>
+  <symbol id="i-mark" viewBox="0 0 24 24"><rect x="4.500" y="12" width="3.400" height="7" rx="1.200"/><rect x="10.300" y="8" width="3.400" height="11" rx="1.200"/><rect x="16.100" y="4.500" width="3.400" height="14.500" rx="1.200"/></symbol>
+  <symbol id="i-dl" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></symbol>
+  <symbol id="i-share" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.600 13.500l6.800 4M15.400 6.500l-6.800 4"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v5M14 11v5"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.400 15a1.700 1.700 0 00.300 1.800l.1.100a2 2 0 11-2.800 2.800l-.1-.1a1.700 1.700 0 00-1.800-.3 1.700 1.700 0 00-1 1.500V21a2 2 0 11-4 0v-.1a1.700 1.700 0 00-1.100-1.500 1.700 1.700 0 00-1.800.3l-.1.100a2 2 0 11-2.800-2.800l.1-.1a1.700 1.700 0 00.3-1.800 1.700 1.700 0 00-1.500-1H3a2 2 0 110-4h.1a1.700 1.700 0 001.500-1.100 1.700 1.700 0 00-.3-1.800l-.1-.1a2 2 0 112.800-2.800l.1.100a1.700 1.700 0 001.800.3H9a1.700 1.700 0 001-1.500V3a2 2 0 114 0v.1a1.700 1.700 0 001 1.500 1.700 1.700 0 001.800-.3l.1-.1a2 2 0 112.800 2.800l-.1.100a1.700 1.700 0 00-.3 1.800V9a1.700 1.700 0 001.500 1H21a2 2 0 110 4h-.1a1.700 1.700 0 00-1.500 1z"/></symbol>
+  <symbol id="i-cheque" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 10h8M6 14h4M16 14h2"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="M21 11.500l-8.600 8.600a5 5 0 01-7-7l8.600-8.600a3.500 3.500 0 015 5L10.400 18a2 2 0 01-3-3l7.700-7.700"/></symbol>
+  <symbol id="i-report" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></symbol>
+  <symbol id="i-up2" viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5M5 21h14"/></symbol>
+  <symbol id="i-dash" viewBox="0 0 24 24"><path d="M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z"/></symbol>
+  <symbol id="i-tx" viewBox="0 0 24 24"><path d="M7 7h13M16 3l4 4-4 4M17 17H4M8 13l-4 4 4 4"/></symbol>
+  <symbol id="i-inv" viewBox="0 0 24 24"><path d="M6 2h9l5 5v15H6zM14 2v6h6M9 13h8M9 17h8"/></symbol>
+  <symbol id="i-crm" viewBox="0 0 24 24"><circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-7 7-7s7 3 7 7M17 4a4 4 0 010 8M22 21c0-3-2-5.500-5-6.500"/></symbol>
+  <symbol id="i-cat" viewBox="0 0 24 24"><path d="M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM17 13v8M13 17h8"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><path d="M12 2l8 3v6c0 5-3.500 9-8 11-4.500-2-8-6-8-11V5z"/><path d="M9 12l2 2 4-4"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.900 4.900l1.400 1.400M17.700 17.700l1.400 1.400M2 12h2M20 12h2M4.900 19.100l1.400-1.400M17.700 6.300l1.400-1.400"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 13A9 9 0 1111 3a7 7 0 0010 10z"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3"/></symbol>
+  <symbol id="i-out" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+  <symbol id="i-bal" viewBox="0 0 24 24"><path d="M3 7h18v12H3zM3 7l3-4h12l3 4M16 13h2"/></symbol>
+</defs></svg>
+
+<section id="login" class="screen hidden">
+  <form class="card login-card" id="loginForm" autocomplete="on">
+    <div class="logo"><svg class="mark"><use href="#i-mark"/></svg></div>
+    <h1>حسابداری کاتالیزور</h1>
+    <p class="muted">مدیریت مالی، فاکتور و مشتریان</p>
+    <label>نام کاربری<input name="username" autocomplete="username" required dir="ltr"></label>
+    <label>رمز عبور<input name="password" type="password" autocomplete="current-password" required dir="ltr"></label>
+    <label id="codeWrap" class="hidden">کد ورود دومرحله‌ای (یا کد بازیابی)<input name="code" inputmode="numeric" autocomplete="one-time-code" dir="ltr" maxlength="11" placeholder="123456"></label>
+    <button class="btn primary big" type="submit" id="loginBtn">ورود</button>
+    <div class="err" id="loginErr"></div>
+  </form>
+</section>
+
+<div id="app" class="hidden">
+  <aside class="side">
+    <div class="brand"><span class="logo sm"><svg class="mark"><use href="#i-mark"/></svg></span><span class="brand-t">حسابداری کاتالیزور</span></div>
+    <nav id="tabs">
+      <button data-tab="dash" class="active"><svg class="ic"><use href="#i-dash"/></svg><span>داشبورد</span></button>
+      <button data-tab="tx"><svg class="ic"><use href="#i-tx"/></svg><span>تراکنش‌ها</span></button>
+      <button data-tab="inv"><svg class="ic"><use href="#i-inv"/></svg><span>فاکتورها</span></button>
+      <button data-tab="crm"><svg class="ic"><use href="#i-crm"/></svg><span>مشتریان</span></button>
+      <button data-tab="dues"><svg class="ic"><use href="#i-cheque"/></svg><span>چک‌ها</span></button>
+      <button data-tab="manage"><svg class="ic"><use href="#i-gear"/></svg><span>مدیریت</span></button>
+    </nav>
+    <div class="side-foot">
+      <div class="usercard"><span class="avatar" id="meAv"></span><div><b id="meName"></b><span class="badge" id="meRole"></span></div></div>
+      <div class="tools">
+        <button class="iconbtn hidden" id="installBtn" title="نصب برنامه"><svg class="ic"><use href="#i-dl"/></svg></button>
+        <button class="iconbtn" id="themeBtn" title="تغییر تم"><svg class="ic"><use href="#i-moon"/></svg></button>
+        <button class="iconbtn" id="pwBtn" title="تغییر رمز"><svg class="ic"><use href="#i-key"/></svg></button>
+        <button class="iconbtn" id="logoutBtn" title="خروج"><svg class="ic"><use href="#i-out"/></svg></button>
+      </div>
+    </div>
+  </aside>
+
+  <main>
+    <section id="tab-dash" class="tab">
+      <div class="head"><div><h2 class="h2" id="greet">داشبورد</h2><p class="muted sub" id="todayLine"></p></div>
+        <div class="row"><button class="btn ghost" id="reportBtn"><svg class="ic"><use href="#i-report"/></svg> گزارش</button><button class="btn primary write-only" data-new><svg class="ic"><use href="#i-plus"/></svg> ثبت تراکنش</button></div></div>
+      <div id="secBanner" class="banner hidden"></div>
+      <div class="chips" id="range">
+        <button data-r="month" class="active">این ماه</button><button data-r="30">۳۰ روز اخیر</button><button data-r="year">امسال</button><button data-r="all">همه</button>
+      </div>
+      <div class="stats">
+        <div class="card stat in"><span class="sico"><svg class="ic"><use href="#i-down"/></svg></span><span class="sl">مجموع ورودی</span><b id="sIn">0</b><small>تومان</small></div>
+        <div class="card stat out"><span class="sico"><svg class="ic"><use href="#i-up"/></svg></span><span class="sl">مجموع خروجی</span><b id="sOut">0</b><small>تومان</small></div>
+        <div class="card stat bal"><span class="sico"><svg class="ic"><use href="#i-bal"/></svg></span><span class="sl">مانده</span><b id="sBal">0</b><small>تومان</small></div>
+        <div class="card stat due"><span class="sico"><svg class="ic"><use href="#i-inv"/></svg></span><span class="sl">مطالبات (فاکتور پرداخت‌نشده)</span><b id="sDue">0</b><small>تومان</small></div>
+      </div>
+      <div class="accs" id="accStrip"></div>
+      <div class="grid2">
+        <div class="card"><h3>ورودی و خروجی</h3><div id="barChart" class="chart"></div></div>
+        <div class="card"><h3>هزینه‌ها به تفکیک علت</h3><div id="donut" class="donut-wrap"></div></div>
+      </div>
+      <div class="grid2 even">
+        <div class="card"><h3>پیگیری‌های امروز و عقب‌افتاده</h3><div id="dFollow" class="mini"></div></div>
+        <div class="card"><h3>بیشترین بدهکاران</h3><div id="dDebt" class="mini"></div></div>
+      </div>
+      <div class="card"><h3>سررسیدهای نزدیک (چک و قسط)</h3><div id="dDues" class="mini"></div></div>
+      <div class="card"><h3>آخرین تراکنش‌ها</h3><div id="recent" class="tablewrap"></div></div>
+    </section>
+
+    <section id="tab-tx" class="tab hidden">
+      <div class="head"><div><h2 class="h2">تراکنش‌ها</h2><p class="muted sub">همه ورودی‌ها و خروجی‌ها</p></div>
+        <button class="btn primary write-only" data-new><svg class="ic"><use href="#i-plus"/></svg> ثبت تراکنش</button></div>
+      <div class="toolbar wrap">
+        <input id="fq" placeholder="جستجو…">
+        <button class="btn ghost" id="ftoggle" type="button">⚙ فیلترها</button>
+        <div class="fextra">
+        <select id="ftype"><option value="">همه</option><option value="income">ورودی</option><option value="expense">خروجی</option></select>
+        <select id="fcat"><option value="">همه دسته‌ها</option></select>
+        <select id="facc"><option value="">همه حساب‌ها</option></select>
+        <label class="inl">از <span class="jdate" id="ffrom"></span></label>
+        <label class="inl">تا <span class="jdate" id="fto"></span></label>
+        <button class="btn ghost" id="fclear">پاک کردن</button>
+        <a class="btn ghost" id="csv" href="#">⬇ خروجی اکسل</a>
+        <button class="btn ghost write-only" id="impBtn" type="button"><svg class="ic"><use href="#i-up2"/></svg> ورود از اکسل</button>
+        </div>
+      </div>
+      <div class="card nopad"><div class="tablewrap"><table id="txTable"></table></div></div>
+      <div class="pager"><button class="btn ghost sm" id="more" hidden>نمایش بیشتر</button><span class="muted" id="txInfo"></span></div>
+    </section>
+
+    <section id="tab-inv" class="tab hidden">
+      <div class="head"><div><h2 class="h2">فاکتورها</h2><p class="muted sub">صدور، چاپ و ثبت دریافت وجه</p></div>
+        <div class="row"><button class="btn ghost owner-only" id="bizBtn">⚙ اطلاعات کسب‌وکار</button><button class="btn primary write-only" id="newInv"><svg class="ic"><use href="#i-plus"/></svg> صدور فاکتور</button></div></div>
+      <div class="card nopad"><div class="tablewrap"><table id="invTable"></table></div></div>
+    </section>
+
+    <section id="tab-crm" class="tab hidden">
+      <div class="head"><div><h2 class="h2">مشتریان</h2><p class="muted sub">مدیریت ارتباط با مشتری و پیگیری‌ها</p></div>
+        <button class="btn primary write-only" id="newCust"><svg class="ic"><use href="#i-plus"/></svg> مشتری جدید</button></div>
+      <div class="toolbar wrap"><input id="cq" placeholder="جستجو: نام، شرکت، تلفن، ایمیل"><div class="chips" id="cStatus"></div></div>
+      <div class="card nopad"><div class="tablewrap"><table id="custTable"></table></div></div>
+    </section>
+
+    <section id="tab-dues" class="tab hidden">
+      <div class="head"><div><h2 class="h2">چک‌ها و اقساط</h2><p class="muted sub">سررسید، یادآوری و تسویه</p></div>
+        <div class="row write-only"><button class="btn ghost" id="newInst">قسط‌بندی</button><button class="btn primary" id="newCheque"><svg class="ic"><use href="#i-plus"/></svg> چک جدید</button></div></div>
+      <div class="stats" id="dueStats"></div>
+      <div class="toolbar wrap"><div class="chips" id="dStatus"></div>
+        <select id="dDir"><option value="">دریافتی و پرداختی</option><option value="in">دریافتی</option><option value="out">پرداختی</option></select>
+        <select id="dKind"><option value="">چک و قسط</option><option value="cheque">چک</option><option value="installment">قسط</option></select></div>
+      <div class="card nopad"><div class="tablewrap"><table id="dueTable"></table></div></div>
+    </section>
+
+    <section id="tab-manage" class="tab hidden">
+      <div class="head"><div><h2 class="h2">مدیریت</h2><p class="muted sub">دسته‌ها، کاربران، بکاپ و سطل بازیافت</p></div></div>
+      <div class="chips" id="mChips">
+        <button data-p="cats" class="active">دسته‌ها</button><button data-p="accounts">حساب‌ها</button><button data-p="users" class="owner-only">کاربران</button><button data-p="backup" class="owner-only">بکاپ</button><button data-p="trash" class="owner-only">سطل بازیافت</button>
+      </div>
+      <div class="mpanel" data-p="cats">
+        <div class="grid2 even">
+        <div class="card"><h3>علت‌های ورودی</h3><ul class="cats" id="catIn"></ul></div>
+        <div class="card"><h3>علت‌های خروجی</h3><ul class="cats" id="catOut"></ul></div>
+      </div>
+        <form class="card write-only inline-form" id="catForm">
+        <input name="name" placeholder="نام دسته جدید" required>
+        <select name="type"><option value="income">ورودی</option><option value="expense">خروجی</option></select>
+        <button class="btn primary">افزودن</button>
+      </form>
+      </div>
+      <div class="mpanel hidden" data-p="accounts"><div class="card" id="accCard"></div></div>
+      <div class="mpanel hidden" data-p="users">
+        <div class="card nopad"><div class="tablewrap"><table id="userTable"></table></div></div>
+      <form class="card inline-form" id="userForm">
+        <input name="name" placeholder="نام نمایشی" required>
+        <input name="username" placeholder="نام کاربری (انگلیسی)" dir="ltr" required>
+        <input name="password" placeholder="رمز موقت (حداقل ۱۰ کاراکتر)" dir="ltr" autocomplete="new-password" required minlength="10">
+        <select name="role">
+          <option value="accountant">حسابدار — ثبت و ویرایش</option>
+          <option value="partner">شریک — فقط مشاهده</option>
+          <option value="owner">مدیر — دسترسی کامل</option>
+        </select>
+        <button class="btn primary">افزودن کاربر</button>
+      </form>
+      <div class="card"><h3>گزارش فعالیت‌ها</h3><div id="auditList" class="audit"></div></div>
+      </div>
+      <div class="mpanel hidden" data-p="backup"><div class="card" id="backupCard"></div></div>
+      <div class="mpanel hidden" data-p="trash"><div id="trashBox" class="trash"></div></div>
+    </section>
+  </main>
+</div>
+
+<button id="fab" class="hidden" aria-label="افزودن"><svg class="ic"><use href="#i-plus"/></svg></button>
+<div id="modal" class="modal hidden"><div class="sheet card" id="sheet"></div></div>
+<div id="printArea"></div>
+<div id="toast"></div>
+<script src="/app.js"></script>
+<script src="/features.js"></script>
+</body>
+</html>

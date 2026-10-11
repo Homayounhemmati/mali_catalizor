@@ -1,0 +1,9 @@
+{
+  "name": "mali-catalizor",
+  "version": "1.0.0",
+  "description": "حسابداری کاتالیزور: مدیریت مالی، فاکتور و مشتریان",
+  "main": "server.js",
+  "scripts": { "start": "node server.js", "test": "node --test test/api.test.js" },
+  "engines": { "node": ">=22.13" },
+  "license": "MIT"
+}
