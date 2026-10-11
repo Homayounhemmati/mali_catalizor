@@ -112,7 +112,7 @@ async function start() {
   $('#meName').textContent = me.name; $('#meRole').textContent = ROLES[me.role]; $('#meAv').textContent = initial(me.name);
   const hr = new Date().getHours(); $('#greet').textContent = `${hr < 12 ? 'صبح بخیر' : hr < 18 ? 'روز بخیر' : 'عصر بخیر'}، ${me.name}`; $('#todayLine').textContent = 'امروز ' + showDate(todayIso());
   document.body.classList.toggle('readonly', me.role === 'partner'); document.body.classList.toggle('is-owner', me.role === 'owner');
-  $$('[data-role=owner]').forEach((b) => b.classList.toggle('hidden', me.role !== 'owner'));
+  
   await loadCats(); goTab('dash');
 }
 async function loadCats() {
@@ -136,7 +136,7 @@ function goTab(t) {
   $$('.tab').forEach((s) => { const on = s.id === 'tab-' + t; s.classList.toggle('hidden', !on); });
   const fab = $('#fab'), fabAct = { dash: () => txModal(), tx: () => txModal(), inv: () => invModal().catch((e) => toast(e.message, 'bad')), crm: () => custModal() }[t];
   fab.classList.toggle('hidden', !fabAct || me.role === 'partner'); fab.onclick = fabAct || null; window.scrollTo({ top: 0 });
-  ({ dash: loadDash, tx: () => loadTx(true), users: loadUsers, cats: () => {}, inv: loadInv, crm: loadCrm })[t]();
+  ({ dash: loadDash, tx: () => loadTx(true), manage: () => showPanel(mp), inv: loadInv, crm: loadCrm })[t]();
 }
 $$('[data-new]').forEach((b) => (b.onclick = () => txModal()));
 
@@ -212,7 +212,7 @@ const loadTx = guard(async (reset) => {
   $('#more').hidden = txRows.length >= txTotal;
   $('#txInfo').textContent = `${fa(txRows.length)} از ${fa(txTotal)} — ورودی ${fa(r.income)} | خروجی ${fa(r.expense)} | مانده ${fa(r.income - r.expense)}`;
   $$('[data-edit]', $('#txTable')).forEach((b) => (b.onclick = () => txModal(txRows.find((x) => x.id == b.dataset.edit))));
-  $$('[data-del]', $('#txTable')).forEach((b) => (b.onclick = guard(async () => { if (!confirm('این تراکنش حذف شود؟ (قابل بازگشت نیست)')) return; await api('/transactions/' + b.dataset.del, { method: 'DELETE' }); toast('حذف شد'); loadTx(true); })));
+  $$('[data-del]', $('#txTable')).forEach((b) => (b.onclick = guard(async () => { if (!confirm('این تراکنش به سطل بازیافت منتقل شود؟ (قابل بازگشت است)')) return; await api('/transactions/' + b.dataset.del, { method: 'DELETE' }); toast('به سطل بازیافت منتقل شد'); loadTx(true); })));
 });
 
 // ---------- فرم ثبت/ویرایش ----------
@@ -258,12 +258,49 @@ const loadUsers = guard(async () => {
   $$('[data-role]', $('#userTable')).forEach((s) => (s.onchange = guard(async () => { await api('/users/' + s.dataset.role, { method: 'PUT', body: { role: s.value } }); toast('نقش تغییر کرد'); })));
   $$('[data-toggle]').forEach((b) => (b.onclick = guard(async () => { await api('/users/' + b.dataset.toggle, { method: 'PUT', body: { active: b.dataset.on !== '1' } }); loadUsers(); })));
   $$('[data-reset]').forEach((b) => (b.onclick = guard(async () => { const p = prompt('رمز جدید (حداقل ۶ کاراکتر):'); if (!p) return; await api('/users/' + b.dataset.reset, { method: 'PUT', body: { password: p } }); toast('رمز تغییر کرد'); })));
-  const log = await api('/audit'), L = { login: 'ورود', password: 'تغییر رمز', 'tx.create': 'ثبت تراکنش', 'tx.update': 'ویرایش تراکنش', 'tx.delete': 'حذف تراکنش', 'user.create': 'افزودن کاربر', 'user.update': 'ویرایش کاربر', 'customer.create': 'افزودن مشتری', 'customer.update': 'ویرایش مشتری', 'customer.delete': 'حذف مشتری', 'invoice.create': 'صدور فاکتور', 'invoice.update': 'ویرایش فاکتور', 'invoice.delete': 'حذف فاکتور', 'invoice.pay': 'ثبت پرداخت فاکتور' };
+  const log = await api('/audit'), L = { login: 'ورود', password: 'تغییر رمز', 'tx.create': 'ثبت تراکنش', 'tx.update': 'ویرایش تراکنش', 'tx.delete': 'حذف تراکنش', 'user.create': 'افزودن کاربر', 'user.update': 'ویرایش کاربر', 'backup.create': 'گرفتن بکاپ', 'backup.download': 'دانلود بکاپ', 'trash.restore': 'بازیابی از سطل', 'trash.purge': 'حذف دائمی', 'customer.create': 'افزودن مشتری', 'customer.update': 'ویرایش مشتری', 'customer.delete': 'حذف مشتری', 'invoice.create': 'صدور فاکتور', 'invoice.update': 'ویرایش فاکتور', 'invoice.delete': 'حذف فاکتور', 'invoice.pay': 'ثبت پرداخت فاکتور' };
   $('#auditList').innerHTML = log.map((a) => `<div><b>${esc(a.who || '—')}</b>${L[a.action] || esc(a.action)}<span style="margin-inline-start:auto" dir="ltr">${esc(a.at)}</span></div>`).join('') || '<div class="empty">—</div>';
 });
 $('#userForm').onsubmit = guard(async (e) => {
   e.preventDefault(); const f = Object.fromEntries(new FormData(e.target));
   await api('/users', { method: 'POST', body: f }); e.target.reset(); toast('کاربر اضافه شد'); loadUsers();
+});
+
+// ---------- مدیریت: دسته‌ها / کاربران / بکاپ / سطل بازیافت ----------
+let mp = 'cats';
+$('#mChips').onclick = (e) => { const b = e.target.closest('button'); if (b) showPanel(b.dataset.p); };
+function showPanel(p) {
+  if (me.role !== 'owner') p = 'cats'; mp = p;
+  $$('#mChips button').forEach((b) => b.classList.toggle('active', b.dataset.p === p));
+  $$('.mpanel').forEach((el) => el.classList.toggle('hidden', el.dataset.p !== p));
+  ({ cats: () => {}, users: loadUsers, backup: loadBackups, trash: loadTrash })[p]();
+}
+const fmtSize = (n) => (n > 1048576 ? fa(+(n / 1048576).toFixed(1)) + ' مگابایت' : fa(Math.max(1, Math.round(n / 1024))) + ' کیلوبایت');
+const fmtDT = (ms) => { const d = new Date(ms); return `${showDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`)} — ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const loadBackups = guard(async () => {
+  const r = await api('/backups'), last = r.list[0];
+  $('#backupCard').innerHTML = `<h3>بکاپ دیتابیس</h3>
+    <p class="muted" style="margin:0 0 14px;line-height:1.9">هر روز به‌صورت خودکار یک نسخه کامل از اطلاعات ساخته می‌شود و آخرین ${fa(r.keep)} نسخه نگه داشته می‌شود.<br>
+    <b style="color:var(--warn)">توجه:</b> نسخه‌های روی همین سرور با خراب شدن سرور از بین می‌روند؛ هر چند وقت یک‌بار نسخه جدید را روی کامپیوتر خودتان دانلود کنید.</p>
+    <div class="info"><div><span>آخرین بکاپ</span>${last ? fmtDT(last.at) : 'هنوز بکاپی ساخته نشده'}</div><div><span>تعداد نسخه‌ها</span>${fa(r.list.length)}</div>
+    <div><span>ارسال خودکار به تلگرام</span>${r.telegram ? (r.lastTelegram ? (r.lastTelegram.ok ? '✅ آخرین ارسال موفق' : '⚠️ آخرین ارسال ناموفق') : 'فعال') : 'غیرفعال'}</div></div>
+    <div class="row" style="margin-bottom:16px"><button class="btn primary" id="bkNow">گرفتن بکاپ همین حالا</button><a class="btn" href="/api/backups/download"><svg class="ic"><use href="#i-dl"/></svg> دانلود بکاپ جدید</a></div>
+    <div class="mini">${r.list.map((f, i) => `<div class="mrow" style="animation-delay:${Math.min(i, 10) * 30}ms;cursor:default"><div class="grow"><b dir="ltr" style="text-align:right">${esc(f.name)}</b><small>${fmtDT(f.at)} · ${fmtSize(f.size)}</small></div><a class="btn ghost sm" href="/api/backups/file/${encodeURIComponent(f.name)}">دانلود</a></div>`).join('') || '<div class="empty">—</div>'}</div>`;
+  $('#bkNow').onclick = guard(async () => { await api('/backups', { method: 'POST', body: {} }); toast('بکاپ ساخته شد'); loadBackups(); });
+});
+const TR = {
+  transactions: { title: 'تراکنش‌ها', line: (x) => `${x.type === 'income' ? '⬇ ورودی' : '⬆ خروجی'} ${fa(x.amount)} تومان — ${esc(x.category || 'بدون دسته')}${x.party ? ' — ' + esc(x.party) : ''}`, sub: (x) => showDate(x.date) },
+  invoices: { title: 'فاکتورها', line: (x) => `فاکتور ${fa(x.number).replace(/٬/g, '')} — ${esc(x.customer)} — ${fa(x.total)} تومان`, sub: (x) => showDate(x.date) },
+  customers: { title: 'مشتریان', line: (x) => `${esc(x.name)}${x.company ? ' — ' + esc(x.company) : ''}`, sub: (x) => STATUS[x.status] },
+};
+const loadTrash = guard(async () => {
+  const r = await api('/trash'), total = Object.keys(TR).reduce((a, k) => a + r[k].length, 0);
+  $('#trashBox').innerHTML = total ? Object.entries(TR).filter(([k]) => r[k].length).map(([k, t]) => `<div class="card"><h3>${t.title} (${fa(r[k].length)})</h3><div class="mini">${r[k].map((x, i) => `
+    <div class="mrow" style="animation-delay:${Math.min(i, 10) * 30}ms;cursor:default"><div class="grow"><b>${t.line(x)}</b><small>${t.sub(x)} · حذف: ${showDate(x.deleted_at.slice(0, 10))}${x.who ? ' توسط ' + esc(x.who) : ''}</small></div>
+    <button class="btn sm" data-restore="${k}/${x.id}">♻ بازیابی</button><button class="btn ghost sm danger" data-purge="${k}/${x.id}" title="حذف دائمی">✕</button></div>`).join('')}</div></div>`).join('')
+    : '<div class="card"><div class="empty">سطل بازیافت خالی است ✨<br><small>تراکنش‌ها، فاکتورها و مشتریانی که حذف می‌کنید اینجا می‌مانند و قابل بازیابی‌اند.</small></div></div>';
+  $$('[data-restore]').forEach((b) => (b.onclick = guard(async () => { await api(`/trash/${b.dataset.restore}/restore`, { method: 'POST', body: {} }); toast('بازیابی شد'); loadTrash(); })));
+  $$('[data-purge]').forEach((b) => (b.onclick = guard(async () => { if (!confirm('برای همیشه حذف شود؟ این کار قابل بازگشت نیست.')) return; await api(`/trash/${b.dataset.purge}`, { method: 'DELETE' }); toast('برای همیشه حذف شد'); loadTrash(); })));
 });
 
 // ---------- فاکتور ----------
@@ -279,7 +316,7 @@ const loadInv = guard(async () => {
   $$('[data-view]', $('#invTable')).forEach((b) => (b.onclick = () => invView(byId(b.dataset.view))));
   $$('[data-editinv]', $('#invTable')).forEach((b) => (b.onclick = guard(() => invModal(byId(b.dataset.editinv)))));
   $$('[data-pay]', $('#invTable')).forEach((b) => (b.onclick = () => payModal(byId(b.dataset.pay))));
-  $$('[data-delinv]', $('#invTable')).forEach((b) => (b.onclick = guard(async () => { if (!confirm('فاکتور حذف شود؟ (تراکنش مالی ثبت‌شده حذف نمی‌شود)')) return; await api('/invoices/' + b.dataset.delinv, { method: 'DELETE' }); toast('حذف شد'); loadInv(); })));
+  $$('[data-delinv]', $('#invTable')).forEach((b) => (b.onclick = guard(async () => { if (!confirm('فاکتور به سطل بازیافت منتقل شود؟ (تراکنش مالی ثبت‌شده حذف نمی‌شود)')) return; await api('/invoices/' + b.dataset.delinv, { method: 'DELETE' }); toast('به سطل بازیافت منتقل شد'); loadInv(); })));
 });
 $('#newInv').onclick = guard(() => invModal());
 $('#bizBtn').onclick = guard(async () => {
@@ -383,7 +420,7 @@ const loadCrm = guard(async () => {
   const byId = (id) => r.rows.find((x) => x.id == id), T = $('#custTable');
   $$('[data-open]', T).forEach((tr) => (tr.onclick = (e) => { if (!e.target.closest('.act')) openCustomer(tr.dataset.open); }));
   $$('[data-ec]', T).forEach((b) => (b.onclick = () => custModal(byId(b.dataset.ec))));
-  $$('[data-dc]', T).forEach((b) => (b.onclick = guard(async () => { if (!confirm('مشتری و تاریخچه یادداشت‌هایش حذف شود؟ (فاکتورها باقی می‌مانند)')) return; await api('/customers/' + b.dataset.dc, { method: 'DELETE' }); toast('حذف شد'); loadCrm(); })));
+  $$('[data-dc]', T).forEach((b) => (b.onclick = guard(async () => { if (!confirm('مشتری به سطل بازیافت منتقل شود؟ (فاکتورها باقی می‌مانند)')) return; await api('/customers/' + b.dataset.dc, { method: 'DELETE' }); toast('به سطل بازیافت منتقل شد'); loadCrm(); })));
 });
 $('#cStatus').onclick = (e) => { const b = e.target.closest('button'); if (b) { cStat = b.dataset.s; loadCrm(); } };
 let cDeb; $('#cq').oninput = () => { clearTimeout(cDeb); cDeb = setTimeout(loadCrm, 300); };

@@ -54,6 +54,12 @@ CREATE TABLE IF NOT EXISTS audit(
 if (!db.prepare('PRAGMA table_info(invoices)').all().some((c) => c.name === 'customer_id'))
   db.exec('ALTER TABLE invoices ADD COLUMN customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL');
 
+for (const t of ['transactions', 'invoices', 'customers']) {
+  const cols = db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
+  if (!cols.includes('deleted_at')) db.exec(`ALTER TABLE ${t} ADD COLUMN deleted_at TEXT`);
+  if (!cols.includes('deleted_by')) db.exec(`ALTER TABLE ${t} ADD COLUMN deleted_by INTEGER`);
+}
+
 // ---------- رمز عبور ----------
 const hash = (pw) => { const s = crypto.randomBytes(16).toString('hex'); return s + ':' + crypto.scryptSync(pw, s, 64).toString('hex'); };
 const verify = (pw, stored) => {
@@ -86,7 +92,7 @@ const audit = (u, action, detail) => db.prepare('INSERT INTO audit(user_id,actio
 const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png' };
 const send = (res, code, body, headers = {}) => {
   const isObj = typeof body === 'object' && !Buffer.isBuffer(body);
-  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin', ...headers });
+  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin', 'X-Robots-Tag': 'noindex, nofollow, noarchive, nosnippet', ...headers });
   res.end(isObj ? JSON.stringify(body) : body);
 };
 class HttpError extends Error { constructor(code, msg) { super(msg); this.code = code; } }
@@ -108,13 +114,13 @@ const tooMany = (ip) => { const a = attempts.get(ip); return a && a.n >= 8 && Da
 const failed = (ip) => { const a = attempts.get(ip); attempts.set(ip, { n: a && Date.now() - a.t < 15 * 60e3 ? a.n + 1 : 1, t: Date.now() }); };
 
 function txFilter(q) {
-  const w = [], p = [];
+  const w = ['t.deleted_at IS NULL'], p = [];
   if (q.type === 'income' || q.type === 'expense') { w.push('t.type=?'); p.push(q.type); }
   if (isDate(q.from)) { w.push('t.date>=?'); p.push(q.from); }
   if (isDate(q.to)) { w.push('t.date<=?'); p.push(q.to); }
   if (q.category) { w.push('t.category_id=?'); p.push(+q.category); }
   if (q.q) { w.push('(t.party LIKE ? OR t.note LIKE ? OR t.ref LIKE ?)'); const s = `%${q.q}%`; p.push(s, s, s); }
-  return { where: w.length ? 'WHERE ' + w.join(' AND ') : '', p };
+  return { where: 'WHERE ' + w.join(' AND '), p };
 }
 const TX_SELECT = `SELECT t.*, c.name AS category, u.name AS author FROM transactions t
   LEFT JOIN categories c ON c.id=t.category_id LEFT JOIN users u ON u.id=t.created_by`;
@@ -134,7 +140,7 @@ const STATUSES = ['lead', 'active', 'vip', 'inactive'];
 const invTotal = (sub, discount, taxPct) => { const base = Math.max(0, sub - discount); return base + Math.round(base * taxPct / 100); };
 // آمار مالی همه مشتری‌ها: {customer_id: {count, invoiced, paid, due}}
 function customerFinance(onlyId) {
-  const invs = db.prepare(`SELECT id,customer_id,status,discount,tax_percent FROM invoices WHERE customer_id IS NOT NULL${onlyId ? ' AND customer_id=' + (+onlyId) : ''}`).all();
+  const invs = db.prepare(`SELECT id,customer_id,status,discount,tax_percent FROM invoices WHERE deleted_at IS NULL AND customer_id IS NOT NULL${onlyId ? ' AND customer_id=' + (+onlyId) : ''}`).all();
   const sums = new Map();
   for (const r of db.prepare('SELECT invoice_id, qty, price FROM invoice_items').all()) sums.set(r.invoice_id, (sums.get(r.invoice_id) || 0) + Math.round(r.qty * r.price));
   const out = new Map();
@@ -172,13 +178,47 @@ function cleanInvoice(b) {
   const tax_percent = Math.min(100, Math.max(0, Number(b.tax_percent) || 0));
   const discount = Math.max(0, Math.round(Number(b.discount) || 0));
   let customer_id = null;
-  if (b.customer_id) { if (!db.prepare('SELECT 1 FROM customers WHERE id=?').get(+b.customer_id)) throw new HttpError(400, 'مشتری یافت نشد'); customer_id = +b.customer_id; }
+  if (b.customer_id) { if (!db.prepare('SELECT 1 FROM customers WHERE id=? AND deleted_at IS NULL').get(+b.customer_id)) throw new HttpError(400, 'مشتری یافت نشد'); customer_id = +b.customer_id; }
   return { customer_id, date: b.date, customer, phone: String(b.phone || '').slice(0, 40), address: String(b.address || '').slice(0, 300), discount, tax_percent, note: String(b.note || '').slice(0, 500), items };
 }
 function saveItems(id, items) {
   const ins = db.prepare('INSERT INTO invoice_items(invoice_id,title,qty,price) VALUES(?,?,?,?)');
   items.forEach((i) => ins.run(id, i.title, i.qty, i.price));
 }
+
+
+// ---------- بکاپ ----------
+const BACKUP_DIR = process.env.BACKUP_DIR || path.join(DATA_DIR, 'backups');
+const BACKUP_KEEP = +process.env.BACKUP_KEEP || 30;
+const BACKUP_RE = /^finance-\d{4}-\d{2}-\d{2}(_\d{6})?\.db$/;
+let lastTelegram = null;
+const listBackups = () => { fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  return fs.readdirSync(BACKUP_DIR).filter((f) => BACKUP_RE.test(f)).map((f) => { const st = fs.statSync(path.join(BACKUP_DIR, f)); return { name: f, size: st.size, at: st.mtimeMs }; }).sort((a, b) => b.at - a.at); };
+async function sendTelegram(file, name) {
+  const tk = process.env.BACKUP_TELEGRAM_TOKEN, chat = process.env.BACKUP_TELEGRAM_CHAT; if (!tk || !chat) return;
+  try {
+    const fd = new FormData(); fd.append('chat_id', chat); fd.append('caption', `بکاپ حسابداری کاتالیزور — ${name}`);
+    fd.append('document', new Blob([fs.readFileSync(file)]), name);
+    const r = await fetch(`https://api.telegram.org/bot${tk}/sendDocument`, { method: 'POST', body: fd, signal: AbortSignal.timeout(30000) });
+    lastTelegram = { ok: r.ok, at: Date.now(), status: r.status };
+  } catch (e) { lastTelegram = { ok: false, at: Date.now(), error: e.message }; }
+}
+function makeBackup(manual) {
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  const d = new Date(), day = d.toISOString().slice(0, 10), name = `finance-${day}${manual ? '_' + d.toISOString().slice(11, 19).replace(/:/g, '') : ''}.db`, file = path.join(BACKUP_DIR, name);
+  if (fs.existsSync(file)) fs.unlinkSync(file);
+  db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
+  for (const old of listBackups().slice(BACKUP_KEEP)) fs.unlinkSync(path.join(BACKUP_DIR, old.name));
+  sendTelegram(file, name);
+  return name;
+}
+let lastBackupCheck = 0;
+function ensureDailyBackup() { // روی هاست‌هایی که برنامه را در بی‌کاری خاموش می‌کنند هم کار می‌کند
+  if (Date.now() - lastBackupCheck < 6e4) return; lastBackupCheck = Date.now();
+  try { if (!fs.existsSync(path.join(BACKUP_DIR, `finance-${new Date().toISOString().slice(0, 10)}.db`))) { const n = makeBackup(false); console.log('بکاپ روزانه ساخته شد:', n); } }
+  catch (e) { console.error('خطا در بکاپ:', e.message); }
+}
+const TRASH = { transactions: 'transactions', invoices: 'invoices', customers: 'customers' };
 
 // ---------- مسیرها ----------
 async function api(req, res, url) {
@@ -203,6 +243,7 @@ async function api(req, res, url) {
     return send(res, 200, { ok: true }, { 'Set-Cookie': 'sid=; HttpOnly; Path=/; Max-Age=0' });
   }
   if (!user) throw new HttpError(401, 'ابتدا وارد شوید');
+  ensureDailyBackup();
   if (m !== 'GET' && !(req.headers['content-type'] || '').includes('json') && m !== 'DELETE') throw new HttpError(415, 'نوع محتوا نامعتبر');
 
   if (p === '/api/me') return send(res, 200, user);
@@ -257,16 +298,16 @@ async function api(req, res, url) {
     if (m === 'PUT') {
       need(can.write(user));
       const v = cleanTx(await readBody(req));
-      const r = db.prepare("UPDATE transactions SET type=?,amount=?,date=?,category_id=?,party=?,method=?,ref=?,note=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(...v, id);
+      const r = db.prepare("UPDATE transactions SET type=?,amount=?,date=?,category_id=?,party=?,method=?,ref=?,note=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND deleted_at IS NULL").run(...v, id);
       if (!r.changes) throw new HttpError(404, 'یافت نشد');
       audit(user, 'tx.update', { id, v });
       return send(res, 200, { ok: true });
     }
     if (m === 'DELETE') {
       need(can.delete(user), 'فقط مدیر می‌تواند حذف کند');
-      const old = db.prepare('SELECT * FROM transactions WHERE id=?').get(id);
+      const old = db.prepare('SELECT * FROM transactions WHERE id=? AND deleted_at IS NULL').get(id);
       if (!old) throw new HttpError(404, 'یافت نشد');
-      db.prepare('DELETE FROM transactions WHERE id=?').run(id);
+      db.prepare('UPDATE transactions SET deleted_at=CURRENT_TIMESTAMP, deleted_by=? WHERE id=?').run(user.id, id);
       audit(user, 'tx.delete', old);
       return send(res, 200, { ok: true });
     }
@@ -294,12 +335,12 @@ async function api(req, res, url) {
   // ---------- مشتریان (CRM) ----------
   if (p === '/api/customers') {
     if (m === 'GET') {
-      const w = [], pr = [];
+      const w = ['c.deleted_at IS NULL'], pr = [];
       if (STATUSES.includes(q.status)) { w.push('c.status=?'); pr.push(q.status); }
       if (q.q) { w.push('(c.name LIKE ? OR c.company LIKE ? OR c.phone LIKE ? OR c.email LIKE ?)'); const x = `%${q.q}%`; pr.push(x, x, x, x); }
       const rows = db.prepare(`SELECT c.*, (SELECT MAX(created_at) FROM customer_notes n WHERE n.customer_id=c.id) last_contact,
-        (SELECT COUNT(*) FROM customer_notes n WHERE n.customer_id=c.id) notes_count FROM customers c ${w.length ? 'WHERE ' + w.join(' AND ') : ''} ORDER BY c.updated_at DESC, c.id DESC LIMIT 1000`).all(...pr);
-      const fin = customerFinance(), counts = Object.fromEntries(db.prepare('SELECT status, COUNT(*) n FROM customers GROUP BY status').all().map((r) => [r.status, r.n]));
+        (SELECT COUNT(*) FROM customer_notes n WHERE n.customer_id=c.id) notes_count FROM customers c WHERE ${w.join(' AND ')} ORDER BY c.updated_at DESC, c.id DESC LIMIT 1000`).all(...pr);
+      const fin = customerFinance(), counts = Object.fromEntries(db.prepare('SELECT status, COUNT(*) n FROM customers WHERE deleted_at IS NULL GROUP BY status').all().map((r) => [r.status, r.n]));
       return send(res, 200, { rows: rows.map((r) => ({ ...r, ...(fin.get(r.id) || { count: 0, invoiced: 0, paid: 0, due: 0 }) })), counts });
     }
     if (m === 'POST') {
@@ -311,18 +352,18 @@ async function api(req, res, url) {
   }
   if (p === '/api/crm/overview' && m === 'GET') {
     const today = isDate(q.today) ? q.today : new Date().toISOString().slice(0, 10), fin = customerFinance();
-    const counts = Object.fromEntries(db.prepare('SELECT status, COUNT(*) n FROM customers GROUP BY status').all().map((r) => [r.status, r.n]));
-    const followups = db.prepare("SELECT id,name,company,phone,status,follow_up FROM customers WHERE follow_up IS NOT NULL AND follow_up<=? AND status!='inactive' ORDER BY follow_up LIMIT 8").all(today);
-    const debtors = db.prepare('SELECT id,name,company,phone,status FROM customers').all().map((c) => ({ ...c, due: (fin.get(c.id) || {}).due || 0 })).filter((c) => c.due > 0).sort((a, b) => b.due - a.due).slice(0, 6);
+    const counts = Object.fromEntries(db.prepare('SELECT status, COUNT(*) n FROM customers WHERE deleted_at IS NULL GROUP BY status').all().map((r) => [r.status, r.n]));
+    const followups = db.prepare("SELECT id,name,company,phone,status,follow_up FROM customers WHERE deleted_at IS NULL AND follow_up IS NOT NULL AND follow_up<=? AND status!='inactive' ORDER BY follow_up LIMIT 8").all(today);
+    const debtors = db.prepare('SELECT id,name,company,phone,status FROM customers WHERE deleted_at IS NULL').all().map((c) => ({ ...c, due: (fin.get(c.id) || {}).due || 0 })).filter((c) => c.due > 0).sort((a, b) => b.due - a.due).slice(0, 6);
     const totalDue = [...fin.values()].reduce((a, f) => a + f.due, 0);
     return send(res, 200, { counts, followups, debtors, totalDue });
   }
   if ((mm = p.match(/^\/api\/customers\/(\d+)$/))) {
-    const id = +mm[1], c = db.prepare('SELECT * FROM customers WHERE id=?').get(id);
+    const id = +mm[1], c = db.prepare('SELECT * FROM customers WHERE id=? AND deleted_at IS NULL').get(id);
     if (!c) throw new HttpError(404, 'مشتری یافت نشد');
     if (m === 'GET') {
       const notes = db.prepare('SELECT n.*, u.name AS author FROM customer_notes n LEFT JOIN users u ON u.id=n.created_by WHERE n.customer_id=? ORDER BY n.id DESC').all(id);
-      const invoices = db.prepare('SELECT id FROM invoices WHERE customer_id=? ORDER BY number DESC').all(id).map((r) => invoiceFull(r.id));
+      const invoices = db.prepare('SELECT id FROM invoices WHERE customer_id=? AND deleted_at IS NULL ORDER BY number DESC').all(id).map((r) => invoiceFull(r.id));
       return send(res, 200, { ...c, ...(customerFinance(id).get(id) || { count: 0, invoiced: 0, paid: 0, due: 0 }), notes, invoices });
     }
     if (m === 'PUT') {
@@ -334,14 +375,14 @@ async function api(req, res, url) {
     }
     if (m === 'DELETE') {
       need(can.delete(user), 'فقط مدیر می‌تواند حذف کند');
-      db.prepare('DELETE FROM customers WHERE id=?').run(id);
+      db.prepare('UPDATE customers SET deleted_at=CURRENT_TIMESTAMP, deleted_by=? WHERE id=?').run(user.id, id);
       audit(user, 'customer.delete', c);
       return send(res, 200, { ok: true });
     }
   }
   if ((mm = p.match(/^\/api\/customers\/(\d+)\/notes$/)) && m === 'POST') {
     need(can.write(user)); const id = +mm[1], b = await readBody(req);
-    if (!db.prepare('SELECT 1 FROM customers WHERE id=?').get(id)) throw new HttpError(404, 'مشتری یافت نشد');
+    if (!db.prepare('SELECT 1 FROM customers WHERE id=? AND deleted_at IS NULL').get(id)) throw new HttpError(404, 'مشتری یافت نشد');
     const text = String(b.text || '').trim().slice(0, 1000), kind = ['note', 'call', 'meeting', 'message'].includes(b.kind) ? b.kind : 'note';
     if (!text) throw new HttpError(400, 'متن یادداشت خالی است');
     const r = db.prepare('INSERT INTO customer_notes(customer_id,kind,text,created_by) VALUES(?,?,?,?)').run(id, kind, text, user.id);
@@ -370,7 +411,7 @@ async function api(req, res, url) {
 
   // ---------- فاکتور ----------
   if (p === '/api/invoices') {
-    if (m === 'GET') return send(res, 200, db.prepare('SELECT id FROM invoices ORDER BY number DESC LIMIT 300').all().map((r) => invoiceFull(r.id)));
+    if (m === 'GET') return send(res, 200, db.prepare('SELECT id FROM invoices WHERE deleted_at IS NULL ORDER BY number DESC LIMIT 300').all().map((r) => invoiceFull(r.id)));
     if (m === 'POST') {
       need(can.write(user)); const v = cleanInvoice(await readBody(req));
       const number = (db.prepare('SELECT MAX(number) n FROM invoices').get().n || 1000) + 1;
@@ -381,7 +422,7 @@ async function api(req, res, url) {
     }
   }
   if ((mm = p.match(/^\/api\/invoices\/(\d+)(\/pay)?$/))) {
-    const id = +mm[1], inv = db.prepare('SELECT * FROM invoices WHERE id=?').get(id);
+    const id = +mm[1], inv = db.prepare('SELECT * FROM invoices WHERE id=? AND deleted_at IS NULL').get(id);
     if (!inv) throw new HttpError(404, 'فاکتور یافت نشد');
     if (mm[2] && m === 'POST') {
       need(can.write(user));
@@ -408,9 +449,51 @@ async function api(req, res, url) {
     }
     if (m === 'DELETE') {
       need(can.delete(user), 'فقط مدیر می‌تواند حذف کند');
-      db.prepare('DELETE FROM invoices WHERE id=?').run(id);
+      db.prepare('UPDATE invoices SET deleted_at=CURRENT_TIMESTAMP, deleted_by=? WHERE id=?').run(user.id, id);
       audit(user, 'invoice.delete', inv);
       return send(res, 200, { ok: true });
+    }
+  }
+
+
+  // ---------- بکاپ (فقط مدیر) ----------
+  if (p === '/api/backups') {
+    need(can.admin(user));
+    if (m === 'GET') return send(res, 200, { list: listBackups(), keep: BACKUP_KEEP, telegram: !!(process.env.BACKUP_TELEGRAM_TOKEN && process.env.BACKUP_TELEGRAM_CHAT), lastTelegram });
+    if (m === 'POST') { const n = makeBackup(true); audit(user, 'backup.create', { n }); return send(res, 201, { name: n, list: listBackups() }); }
+  }
+  if (p === '/api/backups/download' && m === 'GET') {
+    need(can.admin(user)); const n = makeBackup(true); audit(user, 'backup.download', { n });
+    return send(res, 200, fs.readFileSync(path.join(BACKUP_DIR, n)), { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${n}"` });
+  }
+  if ((mm = p.match(/^\/api\/backups\/file\/([^/]+)$/)) && m === 'GET') {
+    need(can.admin(user)); const n = decodeURIComponent(mm[1]);
+    if (!BACKUP_RE.test(n) || !fs.existsSync(path.join(BACKUP_DIR, n))) throw new HttpError(404, 'یافت نشد');
+    audit(user, 'backup.download', { n });
+    return send(res, 200, fs.readFileSync(path.join(BACKUP_DIR, n)), { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${n}"` });
+  }
+
+  // ---------- سطل بازیافت (فقط مدیر) ----------
+  if (p === '/api/trash' && m === 'GET') {
+    need(can.admin(user));
+    const by = 'LEFT JOIN users u ON u.id=x.deleted_by';
+    return send(res, 200, {
+      transactions: db.prepare(`SELECT x.id,x.type,x.amount,x.date,x.party,x.note,x.deleted_at,u.name AS who,c.name AS category FROM transactions x ${by} LEFT JOIN categories c ON c.id=x.category_id WHERE x.deleted_at IS NOT NULL ORDER BY x.deleted_at DESC LIMIT 200`).all(),
+      invoices: db.prepare('SELECT x.id FROM invoices x WHERE x.deleted_at IS NOT NULL ORDER BY x.deleted_at DESC LIMIT 200').all().map((r) => ({ ...invoiceFull(r.id), who: (db.prepare('SELECT u.name FROM invoices x LEFT JOIN users u ON u.id=x.deleted_by WHERE x.id=?').get(r.id) || {}).name })),
+      customers: db.prepare(`SELECT x.id,x.name,x.company,x.phone,x.status,x.deleted_at,u.name AS who FROM customers x ${by} WHERE x.deleted_at IS NOT NULL ORDER BY x.deleted_at DESC LIMIT 200`).all(),
+    });
+  }
+  if ((mm = p.match(/^\/api\/trash\/(transactions|invoices|customers)\/(\d+)(\/restore)?$/))) {
+    need(can.admin(user)); const tbl = TRASH[mm[1]], id = +mm[2];
+    const row = db.prepare(`SELECT * FROM ${tbl} WHERE id=? AND deleted_at IS NOT NULL`).get(id);
+    if (!row) throw new HttpError(404, 'در سطل بازیافت یافت نشد');
+    if (mm[3] && m === 'POST') {
+      db.prepare(`UPDATE ${tbl} SET deleted_at=NULL, deleted_by=NULL WHERE id=?`).run(id);
+      audit(user, 'trash.restore', { type: mm[1], id }); return send(res, 200, { ok: true });
+    }
+    if (!mm[3] && m === 'DELETE') {
+      db.prepare(`DELETE FROM ${tbl} WHERE id=?`).run(id);
+      audit(user, 'trash.purge', { type: mm[1], id }); return send(res, 200, { ok: true });
     }
   }
 
@@ -449,6 +532,7 @@ const PUB = path.join(__dirname, 'public');
 http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   try {
+    if (url.pathname === '/robots.txt') return send(res, 200, 'User-agent: *\nDisallow: /\n', { 'Content-Type': 'text/plain; charset=utf-8' });
     if (url.pathname === '/healthz') return send(res, 200, 'ok', { 'Content-Type': 'text/plain' });
     if (url.pathname.startsWith('/api/')) return await api(req, res, url);
     let f = path.normalize(path.join(PUB, url.pathname === '/' ? 'index.html' : url.pathname));
@@ -461,3 +545,4 @@ http.createServer(async (req, res) => {
 }).listen(PORT, () => console.log(`http://localhost:${PORT}`));
 
 setInterval(() => db.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now()), 36e5).unref();
+ensureDailyBackup(); setInterval(ensureDailyBackup, 30 * 60e3).unref();

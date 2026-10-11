@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b1020">
+<meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
+<meta name="googlebot" content="noindex, nofollow">
 <meta name="description" content="حسابداری کاتالیزور؛ مدیریت مالی، فاکتور و مشتریان">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
@@ -29,6 +31,8 @@ try{var t=localStorage.getItem('theme')||(matchMedia('(prefers-color-scheme:ligh
   <symbol id="i-mark" viewBox="0 0 24 24"><rect x="4.500" y="12" width="3.400" height="7" rx="1.200"/><rect x="10.300" y="8" width="3.400" height="11" rx="1.200"/><rect x="16.100" y="4.500" width="3.400" height="14.500" rx="1.200"/></symbol>
   <symbol id="i-dl" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></symbol>
   <symbol id="i-share" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.600 13.500l6.800 4M15.400 6.500l-6.800 4"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v5M14 11v5"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.400 15a1.700 1.700 0 00.300 1.800l.1.100a2 2 0 11-2.800 2.800l-.1-.1a1.700 1.700 0 00-1.800-.3 1.700 1.700 0 00-1 1.500V21a2 2 0 11-4 0v-.1a1.700 1.700 0 00-1.100-1.500 1.700 1.700 0 00-1.800.3l-.1.100a2 2 0 11-2.800-2.800l.1-.1a1.700 1.700 0 00.3-1.800 1.700 1.700 0 00-1.500-1H3a2 2 0 110-4h.1a1.700 1.700 0 001.500-1.100 1.700 1.700 0 00-.3-1.800l-.1-.1a2 2 0 112.800-2.800l.1.100a1.700 1.700 0 001.800.3H9a1.700 1.700 0 001-1.500V3a2 2 0 114 0v.1a1.700 1.700 0 001 1.500 1.700 1.700 0 001.800-.3l.1-.1a2 2 0 112.800 2.800l-.1.100a1.700 1.700 0 00-.3 1.800V9a1.700 1.700 0 001.500 1H21a2 2 0 110 4h-.1a1.700 1.700 0 00-1.500 1z"/></symbol>
   <symbol id="i-dash" viewBox="0 0 24 24"><path d="M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z"/></symbol>
   <symbol id="i-tx" viewBox="0 0 24 24"><path d="M7 7h13M16 3l4 4-4 4M17 17H4M8 13l-4 4 4 4"/></symbol>
   <symbol id="i-inv" viewBox="0 0 24 24"><path d="M6 2h9l5 5v15H6zM14 2v6h6M9 13h8M9 17h8"/></symbol>
@@ -65,8 +69,7 @@ try{var t=localStorage.getItem('theme')||(matchMedia('(prefers-color-scheme:ligh
       <button data-tab="tx"><svg class="ic"><use href="#i-tx"/></svg><span>تراکنش‌ها</span></button>
       <button data-tab="inv"><svg class="ic"><use href="#i-inv"/></svg><span>فاکتورها</span></button>
       <button data-tab="crm"><svg class="ic"><use href="#i-crm"/></svg><span>مشتریان</span></button>
-      <button data-tab="cats"><svg class="ic"><use href="#i-cat"/></svg><span>دسته‌ها</span></button>
-      <button data-tab="users" data-role="owner"><svg class="ic"><use href="#i-users"/></svg><span>کاربران</span></button>
+      <button data-tab="manage"><svg class="ic"><use href="#i-gear"/></svg><span>مدیریت</span></button>
     </nav>
     <div class="side-foot">
       <div class="usercard"><span class="avatar" id="meAv"></span><div><b id="meName"></b><span class="badge" id="meRole"></span></div></div>
@@ -135,22 +138,24 @@ try{var t=localStorage.getItem('theme')||(matchMedia('(prefers-color-scheme:ligh
       <div class="card nopad"><div class="tablewrap"><table id="custTable"></table></div></div>
     </section>
 
-    <section id="tab-cats" class="tab hidden">
-      <div class="head"><div><h2 class="h2">دسته‌بندی‌ها</h2><p class="muted sub">علت‌های ورودی و خروجی</p></div></div>
-      <div class="grid2 even">
+    <section id="tab-manage" class="tab hidden">
+      <div class="head"><div><h2 class="h2">مدیریت</h2><p class="muted sub">دسته‌ها، کاربران، بکاپ و سطل بازیافت</p></div></div>
+      <div class="chips owner-only" id="mChips">
+        <button data-p="cats" class="active">دسته‌ها</button><button data-p="users">کاربران</button><button data-p="backup">بکاپ</button><button data-p="trash">سطل بازیافت</button>
+      </div>
+      <div class="mpanel" data-p="cats">
+        <div class="grid2 even">
         <div class="card"><h3>علت‌های ورودی</h3><ul class="cats" id="catIn"></ul></div>
         <div class="card"><h3>علت‌های خروجی</h3><ul class="cats" id="catOut"></ul></div>
       </div>
-      <form class="card write-only inline-form" id="catForm">
+        <form class="card write-only inline-form" id="catForm">
         <input name="name" placeholder="نام دسته جدید" required>
         <select name="type"><option value="income">ورودی</option><option value="expense">خروجی</option></select>
         <button class="btn primary">افزودن</button>
       </form>
-    </section>
-
-    <section id="tab-users" class="tab hidden">
-      <div class="head"><div><h2 class="h2">کاربران</h2><p class="muted sub">سطح دسترسی و گزارش فعالیت‌ها</p></div></div>
-      <div class="card nopad"><div class="tablewrap"><table id="userTable"></table></div></div>
+      </div>
+      <div class="mpanel hidden" data-p="users">
+        <div class="card nopad"><div class="tablewrap"><table id="userTable"></table></div></div>
       <form class="card inline-form" id="userForm">
         <input name="name" placeholder="نام نمایشی" required>
         <input name="username" placeholder="نام کاربری (انگلیسی)" dir="ltr" required>
@@ -163,6 +168,9 @@ try{var t=localStorage.getItem('theme')||(matchMedia('(prefers-color-scheme:ligh
         <button class="btn primary">افزودن کاربر</button>
       </form>
       <div class="card"><h3>گزارش فعالیت‌ها</h3><div id="auditList" class="audit"></div></div>
+      </div>
+      <div class="mpanel hidden" data-p="backup"><div class="card" id="backupCard"></div></div>
+      <div class="mpanel hidden" data-p="trash"><div id="trashBox" class="trash"></div></div>
     </section>
   </main>
 </div>

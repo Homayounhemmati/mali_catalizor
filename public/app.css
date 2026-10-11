@@ -277,3 +277,5 @@ body{-webkit-tap-highlight-color:transparent;overscroll-behavior-y:none}
  .minis{grid-template-columns:repeat(3,1fr);gap:8px}.minis div{padding:10px 6px}.minis b{font-size:14px}.minis span{font-size:10.5px}
  .form{gap:10px}
 }
+
+.mpanel{display:grid;gap:18px}.mrow .btn{flex:none}.btn.danger{color:var(--out)}
