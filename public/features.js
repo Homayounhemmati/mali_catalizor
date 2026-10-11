@@ -20,7 +20,7 @@ const accountOptions = (sel) => '<option value="">— بدون حساب —</opt
 
 const loadAccountsPanel = guard(async () => {
   await loadAccounts();
-  const tr = await api('/transfers'), canW = me.role !== 'partner', total = accounts.filter((a) => a.active).reduce((s, a) => s + a.balance, 0);
+  const tr = await api('/transfers'), canW = P('finance', 'edit'), total = accounts.filter((a) => a.active).reduce((s, a) => s + a.balance, 0);
   $('#accCard').innerHTML = `<div class="head" style="margin-bottom:14px"><div><h3 style="margin:0">حساب‌ها و موجودی</h3><p class="muted sub">جمع موجودی حساب‌های فعال: <b style="color:var(--text)">${fa(total)}</b> تومان</p></div>
     <div class="row">${canW ? '<button class="btn ghost" id="trfBtn">⇄ انتقال بین حساب‌ها</button>' : ''}${me.role === 'owner' ? '<button class="btn primary" id="accNew"><svg class="ic"><use href="#i-plus"/></svg> حساب جدید</button>' : ''}</div></div>
     <div class="mini">${accounts.map((a, i) => `<div class="mrow" style="animation-delay:${i * 40}ms;cursor:default;${a.active ? '' : 'opacity:.55'}"><span class="avatar">${a.kind === 'cash' ? '💵' : a.kind === 'card' ? '💳' : '🏦'}</span><div class="grow"><b>${esc(a.name)}${a.active ? '' : ' (غیرفعال)'}</b><small>${KINDS_ACC[a.kind]} · موجودی اولیه ${fa(a.opening)}</small></div>
@@ -61,14 +61,15 @@ function transferModal() {
 
 // ================= داشبورد: حساب‌ها، سررسیدها، هشدارها =================
 const renderDashExtra = guard(async () => {
-  const [accs, ov] = await Promise.all([api('/accounts'), api('/dues/overview?today=' + todayIso())]); accounts = accs;
+  const [accs, ov] = await Promise.all([P('finance') ? api('/accounts') : [], P('dues') ? api('/dues/overview?today=' + todayIso()) : null]); accounts = accs;
   const act = accs.filter((a) => a.active), total = act.reduce((s, a) => s + a.balance, 0);
   $('#accStrip').innerHTML = act.length ? `<div class="acc-card total"><span>جمع موجودی</span><b>${fa(total)}</b></div>` + act.map((a) => `<div class="acc-card"><span>${a.kind === 'cash' ? '💵' : a.kind === 'card' ? '💳' : '🏦'} ${esc(a.name)}</span><b class="${a.balance < 0 ? 'late' : ''}">${fa(a.balance)}</b></div>`).join('') : '';
   const lbl = (d) => { const n = dayDiff(d.due_date); return n < 0 ? `<span class="status late">${fa(-n)} روز دیرکرد</span>` : n === 0 ? '<span class="status today">امروز</span>' : `<span class="status ${n <= 3 ? 'today' : 'later'}">${fa(n)} روز دیگر</span>`; };
-  $('#dDues').innerHTML = ov.upcoming.length ? ov.upcoming.map((d, i) => `<div class="mrow" data-gotodues style="animation-delay:${i * 40}ms"><span class="avatar">${d.direction === 'in' ? '⬇' : '⬆'}</span><div class="grow"><b>${d.kind === 'cheque' ? 'چک' : 'قسط'} ${d.direction === 'in' ? 'دریافتی' : 'پرداختی'} — ${esc(d.party || d.customer_name || '—')}</b><small>${showDate(d.due_date)}${d.number ? ' · شماره ' + esc(d.number) : ''}</small></div><span class="amt ${d.direction === 'in' ? 'income' : 'expense'}">${fa(d.amount)}</span>${lbl(d)}</div>`).join('') : '<div class="empty">سررسید نزدیکی وجود ندارد ✨</div>';
+  $('#dDues').closest('.card').classList.toggle('hidden', !ov);
+  if (ov) $('#dDues').innerHTML = ov.upcoming.length ? ov.upcoming.map((d, i) => `<div class="mrow" data-gotodues style="animation-delay:${i * 40}ms"><span class="avatar">${d.direction === 'in' ? '⬇' : '⬆'}</span><div class="grow"><b>${d.kind === 'cheque' ? 'چک' : 'قسط'} ${d.direction === 'in' ? 'دریافتی' : 'پرداختی'} — ${esc(d.party || d.customer_name || '—')}</b><small>${showDate(d.due_date)}${d.number ? ' · شماره ' + esc(d.number) : ''}</small></div><span class="amt ${d.direction === 'in' ? 'income' : 'expense'}">${fa(d.amount)}</span>${lbl(d)}</div>`).join('') : '<div class="empty">سررسید نزدیکی وجود ندارد ✨</div>';
   $$('[data-gotodues]').forEach((el) => (el.onclick = () => goTab('dues')));
   const bn = [];
-  if (ov.overdue) bn.push(`<div class="b warn">⚠️ ${fa(ov.overdue)} چک/قسط سررسید گذشته و تسویه‌نشده دارید <button class="btn sm" data-bgo="dues">مشاهده</button></div>`);
+  if (ov && ov.overdue) bn.push(`<div class="b warn">⚠️ ${fa(ov.overdue)} چک/قسط سررسید گذشته و تسویه‌نشده دارید <button class="btn sm" data-bgo="dues">مشاهده</button></div>`);
   if (me.role === 'owner' && !me.totp_enabled) bn.push('<div class="b sec">🔐 ورود دومرحله‌ای برای حساب مدیر فعال نیست. برای امنیت داده‌های مالی فعالش کنید. <button class="btn sm" data-bgo="2fa">فعال‌سازی</button></div>');
   const el = $('#secBanner'); el.innerHTML = bn.join(''); el.classList.toggle('hidden', !bn.length);
   $$('[data-bgo]', el).forEach((b) => (b.onclick = () => (b.dataset.bgo === '2fa' ? accountModal() : goTab(b.dataset.bgo))));
@@ -134,7 +135,7 @@ const loadDues = guard(async () => {
     <div class="card stat out"><span class="sico"><svg class="ic"><use href="#i-up"/></svg></span><span class="sl">پرداختی‌های در راه (${fa(ov.out.n)})</span><b>${fa(ov.out.total)}</b><small>تومان</small></div>
     <div class="card stat due"><span class="sico"><svg class="ic"><use href="#i-cheque"/></svg></span><span class="sl">سررسید گذشته</span><b>${fa(ov.overdue)}</b><small>مورد</small></div>`;
   $('#dStatus').innerHTML = [['pending', 'در انتظار'], ['done', 'انجام‌شده'], ['bounced', 'برگشتی'], ['cancelled', 'لغوشده'], ['all', 'همه']].map(([k, v]) => `<button data-s="${k}" class="${k === dStat ? 'active' : ''}">${v}</button>`).join('');
-  const canW = me.role !== 'partner';
+  const canW = P('dues', 'edit');
   $('#dueTable').innerHTML = rows.length ? `<thead><tr><th>سررسید</th><th>نوع</th><th>طرف حساب / شرح</th><th>مبلغ (تومان)</th><th>وضعیت</th><th></th></tr></thead><tbody>${rows.map((d, i) => `
     <tr style="animation-delay:${Math.min(i, 15) * 30}ms"><td>${showDate(d.due_date)}</td><td><span class="tag">${d.kind === 'cheque' ? '🧾 چک' : '📆 قسط'} ${d.direction === 'in' ? 'دریافتی' : 'پرداختی'}</span></td>
     <td><b>${esc(d.party || d.customer_name || '—')}</b><small class="muted" style="display:block">${d.kind === 'cheque' ? [d.number && 'شماره ' + esc(d.number), esc(d.bank)].filter(Boolean).join(' · ') : esc(d.title)}${d.att ? ` <button class="clip" data-att="due:${d.id}">📎 ${fa(d.att)}</button>` : ''}</small></td>
@@ -151,7 +152,7 @@ $('#dDir').onchange = $('#dKind').onchange = () => loadDues();
 $('#newCheque').onclick = () => chequeModal(); $('#newInst').onclick = () => instModal();
 
 let custCache = null;
-const customerOptions = async (sel) => { custCache = (await api('/customers')).rows; return '<option value="">— بدون مشتری —</option>' + custCache.map((c) => `<option value="${c.id}" ${c.id == sel ? 'selected' : ''}>${esc(c.name)}${c.company ? ' — ' + esc(c.company) : ''}</option>`).join(''); };
+const customerOptions = async (sel) => { custCache = await api('/customers/lookup'); return '<option value="">— بدون مشتری —</option>' + custCache.map((c) => `<option value="${c.id}" ${c.id == sel ? 'selected' : ''}>${esc(c.name)}${c.company ? ' — ' + esc(c.company) : ''}</option>`).join(''); };
 const dirSeg = (dir) => `<div class="seg2 full ${dir === 'out' ? 'out' : ''}" id="dseg"><span class="pill"></span><button type="button" data-d="in" class="${dir === 'out' ? '' : 'on'}">⬇ دریافتی (از مشتری)</button><button type="button" data-d="out" class="${dir === 'out' ? 'on' : ''}">⬆ پرداختی (به دیگران)</button></div>`;
 function bindSeg(s, get, set) { const seg = $('#dseg', s); seg.onclick = (e) => { const b = e.target.closest('button'); if (!b) return; set(b.dataset.d); seg.classList.toggle('out', get() === 'out'); $$('button', seg).forEach((x) => x.classList.toggle('on', x.dataset.d === get())); }; }
 
@@ -406,4 +407,26 @@ function enforceSecurity() {
     (s) => { $('#lkOut', s).onclick = async () => { await api('/logout', { method: 'POST', body: {} }); closeModal(true); me = null; showLogin(); };
       bindPwForm(s, async () => { closeModal(true); me = await api('/me'); toast('رمز جدید ذخیره شد'); start(); }); }, { locked: true });
   } else if (me.need_2fa_setup) tfSetup(true);
+}
+
+
+// ================= تنظیم دسترسی کاربران (فقط مدیر) =================
+const PRESET_PERMS = {
+  accountant: { finance: 'edit', invoices: 'edit', dues: 'edit', crm: 'none' },
+  sales: { finance: 'none', invoices: 'none', dues: 'none', crm: 'edit' },
+  partner: { finance: 'view', invoices: 'view', dues: 'view', crm: 'view' },
+};
+function permModal(u) {
+  const cur = { ...u.perms };
+  modal(`<h2>دسترسی‌های ${esc(u.name)}</h2><p class="muted" style="margin-top:-8px;line-height:1.9">نقش فعلی: <b>${ROLES[u.role]}</b>. برای هر بخش سطح دسترسی را جدا تعیین کنید. مدیریت کاربران، بکاپ، سطل بازیافت و حذف همیشه فقط برای مدیر است.</p>
+    <div class="chips" id="pmPre" style="margin-bottom:12px">${Object.entries(PRESET_PERMS).map(([k]) => `<button type="button" data-pre="${k}">${ROLES[k]}</button>`).join('')}</div>
+    <form class="form" id="pmForm">${Object.entries(MODS).map(([m, l]) => `<label class="full">${l}<select name="${m}">${Object.entries(LVF).map(([k, v]) => `<option value="${k}" ${cur[m] === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>`).join('')}
+      <p class="muted full" style="margin:0;font-size:12.5px;line-height:1.9">• «ثبت دریافت وجه» و «تسویهٔ چک/قسط» علاوه بر بخش خودشان، دسترسی «مالی – ثبت» هم می‌خواهند.<br>• کاربر بدون دسترسی به «فاکتورها»، اعداد مالی مشتریان (خرید و بدهی) را هم نمی‌بیند.</p>
+      <div class="form-actions full"><button type="button" class="btn ghost" data-close>انصراف</button><button class="btn primary">ذخیره دسترسی‌ها</button></div></form>`,
+  (s) => {
+    const f = $('#pmForm', s);
+    $('#pmPre', s).onclick = (e) => { const b = e.target.closest('[data-pre]'); if (!b) return; for (const [m, v] of Object.entries(PRESET_PERMS[b.dataset.pre])) f[m].value = v; };
+    f.onsubmit = guard(async (e) => { e.preventDefault(); const perms = {}; for (const m of Object.keys(MODS)) perms[m] = f[m].value;
+      await api('/users/' + u.id, { method: 'PUT', body: { perms } }); closeModal(); toast('دسترسی‌ها ذخیره شد؛ از همین لحظه اعمال می‌شود'); loadUsers(); });
+  });
 }

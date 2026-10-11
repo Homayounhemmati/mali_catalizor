@@ -29,24 +29,25 @@ const loadCrm = guard(async () => {
   if (!team.length) team = await api('/team');
   const params = { q: $('#cq').value.trim(), status: CS.view === 'board' ? '' : CS.status, segment: CS.segment, tag: CS.tag, assignee: CS.assignee, sort: CS.sort, today: todayIso() };
   const [r, ov] = await Promise.all([api('/customers' + qs(params)), api('/crm/overview?today=' + todayIso())]);
-  const canW = me.role !== 'partner', f = r.facets; crmTags = Object.keys(f.tags);
+  const canW = P('crm', 'edit'), canInv = P('invoices'), f = r.facets; crmTags = Object.keys(f.tags);
   // آمار
   const st = ov.stats;
   $('#crmKpis').innerHTML = `<div class="kpi"><span>کل مشتریان</span><b>${fa(st.total)}</b><small>${fa(st.new30)} جدید در ۳۰ روز</small></div>
-    <button class="kpi ${st.outstanding ? 'warn' : ''}" data-seg="due"><span>مطالبات معوق</span><b>${fa(st.outstanding)}</b><small>تومان</small></button>
+    ${st.outstanding === undefined ? '' : `<button class="kpi ${st.outstanding ? 'warn' : ''}" data-seg="due"><span>مطالبات معوق</span><b>${fa(st.outstanding)}</b><small>تومان</small></button>`}
     <button class="kpi ${st.followupsDue ? 'late' : ''}" data-seg="followup"><span>پیگیری امروز و عقب‌افتاده</span><b>${fa(st.followupsDue)}</b><small>مشتری</small></button>
     <button class="kpi" data-seg="stale"><span>بدون ارتباط ۳۰+ روز</span><b>${fa(st.stale)}</b><small>مشتری</small></button>`;
   $$('[data-seg]', $('#crmKpis')).forEach((b) => (b.onclick = () => { CS.segment = CS.segment === b.dataset.seg ? '' : b.dataset.seg; loadCrm(); }));
   // کنترل‌ها
   $$('#crmView button').forEach((b) => b.classList.toggle('active', b.dataset.v === CS.view));
-  $('#crmSegs').innerHTML = SEGS.map(([k, v]) => `<button data-s="${k}" class="${k === CS.segment ? 'active' : ''}">${v}${k ? `<em>${fa(f.segments[k] || 0)}</em>` : ''}</button>`).join('');
-  $('#cAsg').innerHTML = asgOptions(CS.assignee, true); $('#cSort').innerHTML = Object.entries(SORTS).map(([k, v]) => `<option value="${k}" ${k === CS.sort ? 'selected' : ''}>مرتب‌سازی: ${v}</option>`).join('');
+  $('#crmSegs').innerHTML = SEGS.filter(([k]) => k !== 'due' || canInv).map(([k, v]) => `<button data-s="${k}" class="${k === CS.segment ? 'active' : ''}">${v}${k ? `<em>${fa(f.segments[k] || 0)}</em>` : ''}</button>`).join('');
+  $('#cAsg').innerHTML = asgOptions(CS.assignee, true); $('#cSort').innerHTML = Object.entries(SORTS).filter(([k]) => canInv || (k !== 'due' && k !== 'revenue')).map(([k, v]) => `<option value="${k}" ${k === CS.sort ? 'selected' : ''}>مرتب‌سازی: ${v}</option>`).join('');
   const tg = $('#crmTags'), tags = Object.entries(f.tags).sort((a, b) => b[1] - a[1]).slice(0, 14);
   tg.classList.toggle('hidden', !tags.length); tg.innerHTML = '<span class="muted" style="padding:0 8px;font-size:12px">برچسب:</span>' + tags.map(([t, n]) => `<button data-t="${esc(t)}" class="${t === CS.tag ? 'active' : ''}">${esc(t)}<em>${fa(n)}</em></button>`).join('');
   const sc = $('#cStatus'), total = Object.values(f.counts).reduce((a, b) => a + b, 0);
   sc.classList.toggle('hidden', CS.view === 'board');
   sc.innerHTML = [['', 'همه وضعیت‌ها', total], ...Object.entries(STATUS).map(([k, v]) => [k, v, f.counts[k] || 0])].map(([k, v, n]) => `<button data-s="${k}" class="${k === CS.status ? 'active' : ''}">${v}<em>${fa(n)}</em></button>`).join('');
   // بدنه
+  if (!canInv && (CS.segment === 'due' || CS.sort === 'due' || CS.sort === 'revenue')) { if (CS.segment === 'due') CS.segment = ''; CS.sort = 'recent'; }
   $('#crmBody').innerHTML = CS.view === 'board' ? boardHtml(r.rows, canW) : listHtml(r.rows, canW);
   bindCrmBody(r.rows, canW);
 });
@@ -68,15 +69,15 @@ function listHtml(rows, canW) {
   if (isMob()) return `<div class="clist">${rows.map((c, i) => `<div class="kcard" data-id="${c.id}" style="animation-delay:${Math.min(i, 12) * 25}ms"><div class="kt"><span class="avatar">${esc(initial(c.name))}</span><div class="grow"><b>${esc(c.name)}</b><small>${esc(c.company || c.phone || '')}</small></div><span class="status st-${c.status}">${STATUS[c.status]}</span></div>
     ${c.tags ? `<div class="tagrow2">${tagChips(c.tags, 4)}</div>` : ''}${c.follow_up ? `<div class="kfu">${fuBadge(c.follow_up, c.follow_up_note)}</div>` : ''}
     <div class="kf"><span class="muted">${ago(c.last_contact || c.created_at)}</span>${c.due ? `<span class="amt expense">بدهی ${fa(c.due)}</span>` : c.paid ? `<span class="amt income">${fa(c.paid)}</span>` : ''}${c.assignee_name ? `<span class="avatar xs" title="${esc(c.assignee_name)}">${esc(initial(c.assignee_name))}</span>` : ''}</div></div>`).join('')}</div>`;
-  return `<div class="card nopad"><div class="tablewrap"><table id="custTable"><thead><tr><th>مشتری</th><th>وضعیت</th><th>مسئول</th><th>خرید (پرداخت‌شده)</th><th>مانده بدهی</th><th>آخرین ارتباط</th><th>پیگیری بعدی</th><th></th></tr></thead><tbody>${rows.map((c, i) => `
+  return `<div class="card nopad"><div class="tablewrap"><table id="custTable"><thead><tr><th>مشتری</th><th>وضعیت</th><th>مسئول</th>${P('invoices') ? '<th>خرید (پرداخت‌شده)</th><th>مانده بدهی</th>' : ''}<th>آخرین ارتباط</th><th>پیگیری بعدی</th><th></th></tr></thead><tbody>${rows.map((c, i) => `
     <tr class="click" data-open="${c.id}" style="animation-delay:${Math.min(i, 15) * 28}ms"><td><div class="cname"><span class="avatar">${esc(initial(c.name))}</span><div><b>${esc(c.name)}</b><small>${esc(c.company || c.phone || '')}</small>${c.tags ? `<div class="tagrow2">${tagChips(c.tags, 3)}</div>` : ''}</div></div></td>
     <td><span class="status st-${c.status}">${STATUS[c.status]}</span></td><td>${c.assignee_name ? esc(c.assignee_name) : '<span class="muted">—</span>'}</td>
-    <td class="amt">${c.paid ? fa(c.paid) : '—'}</td><td class="amt ${c.due ? 'expense' : ''}">${c.due ? fa(c.due) : '—'}</td>
+    ${P('invoices') ? `<td class="amt">${c.paid ? fa(c.paid) : '—'}</td><td class="amt ${c.due ? 'expense' : ''}">${c.due ? fa(c.due) : '—'}</td>` : ''}
     <td>${ago(c.last_contact || c.created_at)}</td><td>${fuBadge(c.follow_up, c.follow_up_note)}</td>
     <td class="act">${canW ? `<button data-ec="${c.id}" title="ویرایش">✎</button>` : ''}${me.role === 'owner' ? `<button class="del" data-dc="${c.id}" title="حذف">🗑</button>` : ''}</td></tr>`).join('')}</tbody></table></div></div>`;
 }
 function boardHtml(rows, canW) {
-  return `<div class="board">${BOARD_COLS.map((st) => { const items = rows.filter((x) => x.status === st), sum = items.reduce((a, x) => a + x.due, 0);
+  return `<div class="board">${BOARD_COLS.map((st) => { const items = rows.filter((x) => x.status === st), sum = items.reduce((a, x) => a + (x.due || 0), 0);
     return `<div class="kcol" data-st="${st}"><div class="kh"><span class="status st-${st}">${STATUS[st]}</span><b>${fa(items.length)}</b>${sum ? `<small>${fa(sum)} بدهی</small>` : ''}</div>
       <div class="kbody">${items.map((c) => `<div class="kcard" ${canW ? 'draggable="true"' : ''} data-id="${c.id}"><div class="kt"><span class="avatar">${esc(initial(c.name))}</span><div class="grow"><b>${esc(c.name)}</b><small>${esc(c.company || c.phone || '')}</small></div></div>
         ${c.tags ? `<div class="tagrow2">${tagChips(c.tags, 3)}</div>` : ''}${c.follow_up ? `<div class="kfu">${fuBadge(c.follow_up, c.follow_up_note)}</div>` : ''}
@@ -135,7 +136,8 @@ const custModal = guard(async (c) => {
 
 // ---------- پروفایل مشتری ----------
 const openCustomer = guard(async (id) => {
-  const c = await api('/customers/' + id), canW = me.role !== 'partner', td = todayIso(), wa = waLink(c.phone);
+  const c = await api('/customers/' + id), canW = P('crm', 'edit'), hasFin = Array.isArray(c.invoices), td = todayIso(), wa = waLink(c.phone);
+  c.invoices = c.invoices || []; c.dues = c.dues || [];
   const pending = c.dues.filter((d) => d.status === 'pending');
   const events = [
     ...c.notes.map((n) => ({ k: n.created_at.slice(0, 10) + ' ' + n.created_at.slice(11), html: `<div class="ev ${n.kind}"><div class="t"><b>${KINDS[n.kind]}</b> · ${showDate(n.created_at.slice(0, 10))} · ${esc(n.author || '')}${canW && (me.role === 'owner' || n.created_by === me.id) ? `<button data-dn="${n.id}" title="حذف">✕</button>` : ''}</div><p>${esc(n.text)}</p></div>` })),
@@ -146,10 +148,10 @@ const openCustomer = guard(async (id) => {
   const avg = c.count ? Math.round(c.invoiced / c.count) : 0, lastInv = c.invoices[0];
   modal(`<button class="btn ghost sm xbtn" data-close aria-label="بستن">✕</button><div class="cust-head"><span class="avatar">${esc(initial(c.name))}</span><div class="grow"><h2>${esc(c.name)}</h2><small class="muted">${[c.company && esc(c.company), c.assignee_name && 'مسئول: ' + esc(c.assignee_name)].filter(Boolean).join(' · ')}</small>${c.tags ? `<div class="tagrow2" style="margin-top:6px">${tagChips(c.tags)}</div>` : ''}</div></div>
     <div class="qa">${canW ? `<select id="cst" class="qsel">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${c.status === k ? 'selected' : ''}>وضعیت: ${v}</option>`).join('')}</select>` : `<span class="status st-${c.status}">${STATUS[c.status]}</span>`}${c.phone ? `<a class="btn sm" href="tel:${esc(c.phone)}">📞 تماس</a>` : ''}${wa ? `<a class="btn sm" href="${esc(wa)}" target="_blank" rel="noopener">💬 واتساپ</a>` : ''}${c.phone ? `<a class="btn sm" href="sms:${esc(c.phone)}">✉️ پیامک</a>` : ''}${c.email ? `<a class="btn sm" href="mailto:${esc(c.email)}">📧 ایمیل</a>` : ''}${c.phone ? '<button class="btn sm" id="cpPhone" type="button">📋 کپی</button>' : ''}
-      <span class="grow"></span>${canW ? '<button class="btn sm" id="cInv">＋ فاکتور</button><button class="btn sm" id="cEdit">✎ ویرایش</button>' : ''}<button class="btn sm" id="cStmt">🧾 صورت‌حساب</button></div>
+      <span class="grow"></span>${P('invoices', 'edit') ? '<button class="btn sm" id="cInv">＋ فاکتور</button>' : ''}${canW ? '<button class="btn sm" id="cEdit">✎ ویرایش</button>' : ''}${hasFin ? '<button class="btn sm" id="cStmt">🧾 صورت‌حساب</button>' : ''}</div>
     <div class="info">${c.phone ? `<div><span>تلفن</span><a href="tel:${esc(c.phone)}" dir="ltr">${esc(c.phone)}</a></div>` : ''}${c.email ? `<div><span>ایمیل</span><a href="mailto:${esc(c.email)}" dir="ltr">${esc(c.email)}</a></div>` : ''}${c.address ? `<div style="grid-column:1/-1"><span>آدرس</span>${esc(c.address)}</div>` : ''}${c.source ? `<div><span>نحوه آشنایی</span>${esc(c.source)}</div>` : ''}<div><span>مشتری از</span>${showDate(c.created_at.slice(0, 10))}</div>${c.note ? `<div style="grid-column:1/-1"><span>توضیحات</span>${esc(c.note)}</div>` : ''}</div>
-    <div class="tiles"><div><b>${fa(c.invoiced)}</b><span>کل فاکتورها</span></div><div><b style="color:var(--in)">${fa(c.paid)}</b><span>پرداخت‌شده</span></div><div><b style="color:${c.due ? 'var(--out)' : 'inherit'}">${fa(c.due)}</b><span>مانده بدهی</span></div>
-      <div><b>${fa(c.count)}</b><span>تعداد فاکتور</span></div><div><b>${fa(avg)}</b><span>میانگین فاکتور</span></div><div><b>${lastInv ? showDate(lastInv.date) : '—'}</b><span>آخرین فاکتور</span></div></div>
+    ${hasFin ? `<div class="tiles"><div><b>${fa(c.invoiced)}</b><span>کل فاکتورها</span></div><div><b style="color:var(--in)">${fa(c.paid)}</b><span>پرداخت‌شده</span></div><div><b style="color:${c.due ? 'var(--out)' : 'inherit'}">${fa(c.due)}</b><span>مانده بدهی</span></div>
+      <div><b>${fa(c.count)}</b><span>تعداد فاکتور</span></div><div><b>${fa(avg)}</b><span>میانگین فاکتور</span></div><div><b>${lastInv ? showDate(lastInv.date) : '—'}</b><span>آخرین فاکتور</span></div></div>` : ''}
     ${pending.length ? `<div class="pend">⏳ ${fa(pending.length)} چک/قسط در انتظار: ${pending.slice(0, 3).map((d) => `${fa(d.amount)} (${showDate(d.due_date)})`).join(' — ')}${pending.length > 3 ? ' …' : ''}</div>` : ''}
     <div class="fu2"><div class="fu2h">🔔 پیگیری بعدی ${fuBadge(c.follow_up, c.follow_up_note)}</div>
       ${canW ? `<div class="fu2b">${quickFuHtml()}<div class="row" style="align-items:center"><span class="jdate" id="fuPick"></span><input id="fuNote" maxlength="200" placeholder="موضوع پیگیری" value="${esc(c.follow_up_note)}" style="flex:1;min-width:140px"><button class="btn sm" id="fuSave">ذخیره</button>${c.follow_up ? '<button class="btn sm primary" id="fuDone">✔ انجام شد</button><button class="btn ghost sm" id="fuClear">حذف</button>' : ''}</div></div>` : ''}</div>
@@ -159,11 +161,11 @@ const openCustomer = guard(async (id) => {
   (s) => {
     $('#sheet').classList.add('wide'); const done = () => { refreshCrm(); openCustomer(id); }, put = (body) => api('/customers/' + id, { method: 'PUT', body });
     const cp = $('#cpPhone', s); if (cp) cp.onclick = () => copyText(c.phone);
-    $('#cStmt', s).onclick = guard(async () => { biz = await api('/settings'); statementView(c); });
+    const ib = $('#cInv', s); if (ib) ib.onclick = guard(() => { closeModal(); return invModal(null, c); });
+    const stb = $('#cStmt', s); if (stb) stb.onclick = guard(async () => { biz = await api('/settings'); statementView(c); });
     if (canW) {
       $('#cst', s).onchange = guard(async (e) => { await put({ status: e.target.value }); toast('وضعیت تغییر کرد'); done(); });
       $('#cEdit', s).onclick = () => custModal(c);
-      $('#cInv', s).onclick = guard(() => { closeModal(); return invModal(null, c); });
       const fp = $('#fuPick', s); datePicker(fp, c.follow_up || '');
       $('[data-quick]', s).onclick = (e) => { const b = e.target.closest('button'); if (b) fp.set(plusDays(+b.dataset.days)); };
       $('#fuSave', s).onclick = guard(async () => { if (!fp.get()) throw new Error('تاریخ را انتخاب کنید (یا یکی از دکمه‌های سریع)'); await put({ follow_up: fp.get(), follow_up_note: $('#fuNote', s).value }); toast('پیگیری ثبت شد'); done(); });

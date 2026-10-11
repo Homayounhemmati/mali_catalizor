@@ -461,3 +461,8 @@ button.tagchip{cursor:pointer}button.tagchip:hover{background:color-mix(in srgb,
 @media(max-width:620px){.tiles{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:900px){.seg-view .lbl{display:none}.seg-view button{padding:9px 13px;font-size:16px}.crm-more-btn{padding:9px 12px}.kcard{gap:5px}}
 @media(max-width:900px){.toolbar.crm-top>.seg-view,.toolbar.crm-top>.crm-more-btn{flex:none}.toolbar.crm-top input#cq{flex:1 1 0;min-width:0}}
+
+/* دسترسی‌ها: دکمه‌های ثبت هر بخش فقط برای کسی که اجازهٔ ثبت دارد */
+.no-fin-w .fin-w,.no-inv-w .inv-w,.no-due-w .due-w,.no-crm-w .crm-w{display:none!important}
+.permsum{display:flex;flex-wrap:wrap;margin-top:4px}
+#userTable select{min-width:175px}

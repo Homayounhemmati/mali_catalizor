@@ -98,7 +98,7 @@
   <main>
     <section id="tab-dash" class="tab">
       <div class="head"><div><h2 class="h2" id="greet">داشبورد</h2><p class="muted sub" id="todayLine"></p></div>
-        <div class="row"><button class="btn ghost" id="reportBtn"><svg class="ic"><use href="#i-report"/></svg> گزارش</button><button class="btn primary write-only" data-new><svg class="ic"><use href="#i-plus"/></svg> ثبت تراکنش</button></div></div>
+        <div class="row"><button class="btn ghost" id="reportBtn"><svg class="ic"><use href="#i-report"/></svg> گزارش</button><button class="btn primary fin-w" data-new><svg class="ic"><use href="#i-plus"/></svg> ثبت تراکنش</button></div></div>
       <div id="secBanner" class="banner hidden"></div>
       <div class="chips" id="range">
         <button data-r="month" class="active">این ماه</button><button data-r="30">۳۰ روز اخیر</button><button data-r="year">امسال</button><button data-r="all">همه</button>
@@ -124,7 +124,7 @@
 
     <section id="tab-tx" class="tab hidden">
       <div class="head"><div><h2 class="h2">تراکنش‌ها</h2><p class="muted sub">همه ورودی‌ها و خروجی‌ها</p></div>
-        <button class="btn primary write-only" data-new><svg class="ic"><use href="#i-plus"/></svg> ثبت تراکنش</button></div>
+        <button class="btn primary fin-w" data-new><svg class="ic"><use href="#i-plus"/></svg> ثبت تراکنش</button></div>
       <div class="toolbar wrap">
         <input id="fq" placeholder="جستجو…">
         <button class="btn ghost" id="ftoggle" type="button">⚙ فیلترها</button>
@@ -136,7 +136,7 @@
         <label class="inl">تا <span class="jdate" id="fto"></span></label>
         <button class="btn ghost" id="fclear">پاک کردن</button>
         <a class="btn ghost" id="csv" href="#">⬇ خروجی اکسل</a>
-        <button class="btn ghost write-only" id="impBtn" type="button"><svg class="ic"><use href="#i-up2"/></svg> ورود از اکسل</button>
+        <button class="btn ghost fin-w" id="impBtn" type="button"><svg class="ic"><use href="#i-up2"/></svg> ورود از اکسل</button>
         </div>
       </div>
       <div class="card nopad"><div class="tablewrap"><table id="txTable"></table></div></div>
@@ -145,13 +145,13 @@
 
     <section id="tab-inv" class="tab hidden">
       <div class="head"><div><h2 class="h2">فاکتورها</h2><p class="muted sub">صدور، چاپ و ثبت دریافت وجه</p></div>
-        <div class="row"><button class="btn ghost owner-only" id="bizBtn">⚙ اطلاعات کسب‌وکار</button><button class="btn primary write-only" id="newInv"><svg class="ic"><use href="#i-plus"/></svg> صدور فاکتور</button></div></div>
+        <div class="row"><button class="btn ghost owner-only" id="bizBtn">⚙ اطلاعات کسب‌وکار</button><button class="btn primary inv-w" id="newInv"><svg class="ic"><use href="#i-plus"/></svg> صدور فاکتور</button></div></div>
       <div class="card nopad"><div class="tablewrap"><table id="invTable"></table></div></div>
     </section>
 
     <section id="tab-crm" class="tab hidden">
       <div class="head"><div><h2 class="h2">مشتریان</h2><p class="muted sub">مدیریت ارتباط با مشتری، پیگیری‌ها و مطالبات</p></div>
-        <div class="row write-only"><button class="btn ghost" id="impCust" type="button"><svg class="ic"><use href="#i-up2"/></svg> ورود از فایل</button><button class="btn primary" id="newCust"><svg class="ic"><use href="#i-plus"/></svg> مشتری جدید</button></div></div>
+        <div class="row crm-w"><button class="btn ghost" id="impCust" type="button"><svg class="ic"><use href="#i-up2"/></svg> ورود از فایل</button><button class="btn primary" id="newCust"><svg class="ic"><use href="#i-plus"/></svg> مشتری جدید</button></div></div>
       <div class="kpis4" id="crmKpis"></div>
       <div class="toolbar wrap crm-top"><input id="cq" placeholder="جستجو: نام، شرکت، تلفن، ایمیل، برچسب"><button class="btn ghost crm-more-btn" id="crmMore" type="button">⚙ فیلتر</button>
         <div class="seg-view" id="crmView"><button data-v="list" title="لیست">☰<span class="lbl"> لیست</span></button><button data-v="board" title="برد">▦<span class="lbl"> برد</span></button></div></div>
@@ -163,7 +163,7 @@
 
     <section id="tab-dues" class="tab hidden">
       <div class="head"><div><h2 class="h2">چک‌ها و اقساط</h2><p class="muted sub">سررسید، یادآوری و تسویه</p></div>
-        <div class="row write-only"><button class="btn ghost" id="newInst">قسط‌بندی</button><button class="btn primary" id="newCheque"><svg class="ic"><use href="#i-plus"/></svg> چک جدید</button></div></div>
+        <div class="row due-w"><button class="btn ghost" id="newInst">قسط‌بندی</button><button class="btn primary" id="newCheque"><svg class="ic"><use href="#i-plus"/></svg> چک جدید</button></div></div>
       <div class="stats" id="dueStats"></div>
       <div class="toolbar wrap"><div class="chips" id="dStatus"></div>
         <select id="dDir"><option value="">دریافتی و پرداختی</option><option value="in">دریافتی</option><option value="out">پرداختی</option></select>
@@ -181,7 +181,7 @@
         <div class="card"><h3>علت‌های ورودی</h3><ul class="cats" id="catIn"></ul></div>
         <div class="card"><h3>علت‌های خروجی</h3><ul class="cats" id="catOut"></ul></div>
       </div>
-        <form class="card write-only inline-form" id="catForm">
+        <form class="card fin-w inline-form" id="catForm">
         <input name="name" placeholder="نام دسته جدید" required>
         <select name="type"><option value="income">ورودی</option><option value="expense">خروجی</option></select>
         <button class="btn primary">افزودن</button>
@@ -195,8 +195,9 @@
         <input name="username" placeholder="نام کاربری (انگلیسی)" dir="ltr" required>
         <input name="password" placeholder="رمز موقت (حداقل ۱۰ کاراکتر)" dir="ltr" autocomplete="new-password" required minlength="10">
         <select name="role">
-          <option value="accountant">حسابدار — ثبت و ویرایش</option>
-          <option value="partner">شریک — فقط مشاهده</option>
+          <option value="accountant">مالی (حسابدار): مالی، فاکتور و چک</option>
+          <option value="sales">فروش: فقط مشتریان (CRM)</option>
+          <option value="partner">شریک: فقط مشاهده</option>
           <option value="owner">مدیر — دسترسی کامل</option>
         </select>
         <button class="btn primary">افزودن کاربر</button>

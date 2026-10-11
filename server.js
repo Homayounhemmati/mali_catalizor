@@ -90,6 +90,22 @@ for (const t of ['transactions', 'invoices', 'customers']) {
   if (!cols.includes('deleted_by')) db.exec(`ALTER TABLE ${t} ADD COLUMN deleted_by INTEGER`);
 }
 
+// مهاجرت: نقش «فروش» و ستون دسترسی‌های سفارشی (CHECK قدیمی فقط سه نقش را می‌پذیرفت؛ جدول با همهٔ ستون‌ها بازسازی می‌شود)
+if (!db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").get().sql.includes("'sales'")) {
+  if (db.prepare('SELECT 1 FROM users LIMIT 1').get()) { // بکاپ پیش از مهاجرت
+    const bd = process.env.BACKUP_DIR || path.join(DATA_DIR, 'backups'); fs.mkdirSync(bd, { recursive: true, mode: 0o700 });
+    const f = path.join(bd, 'pre-roles-migration.db'); if (fs.existsSync(f)) fs.unlinkSync(f); db.exec(`VACUUM INTO '${f.replace(/'/g, "''")}'`); try { fs.chmodSync(f, 0o600); } catch {}
+  }
+  db.exec('PRAGMA foreign_keys=OFF'); db.exec('BEGIN');
+  try {
+    db.exec(`CREATE TABLE users_new(id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
+      role TEXT NOT NULL CHECK(role IN ('owner','accountant','sales','partner')), pass TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      totp_secret TEXT, totp_enabled INTEGER NOT NULL DEFAULT 0, totp_last INTEGER NOT NULL DEFAULT 0, recovery TEXT, must_change INTEGER NOT NULL DEFAULT 0, perms TEXT)`);
+    db.exec('INSERT INTO users_new(id,username,name,role,pass,active,created_at,totp_secret,totp_enabled,totp_last,recovery,must_change) SELECT id,username,name,role,pass,active,created_at,totp_secret,totp_enabled,totp_last,recovery,must_change FROM users');
+    db.exec('DROP TABLE users'); db.exec('ALTER TABLE users_new RENAME TO users'); db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; } finally { db.exec('PRAGMA foreign_keys=ON'); }
+}
+
 // ---------- رمز عبور ----------
 const hash = (pw) => { const s = crypto.randomBytes(16).toString('hex'); return s + ':' + crypto.scryptSync(pw, s, 64).toString('hex'); };
 const verify = (pw, stored) => {
@@ -113,11 +129,28 @@ if (!db.prepare('SELECT 1 FROM accounts LIMIT 1').get()) db.prepare("INSERT INTO
 
 // ---------- نقش‌ها ----------
 // owner: همه‌چیز | accountant: ثبت/ویرایش تراکنش و دسته‌ها | partner: فقط مشاهده
+// دسترسی هر کاربر: چهار بخش × سه سطح (none / view / edit). نقش فقط پیش‌فرض را می‌دهد؛ مدیر می‌تواند برای هر نفر تغییر دهد.
+const MODS = ['finance', 'invoices', 'dues', 'crm'], LV = { none: 0, view: 1, edit: 2 };
+const PRESETS = {
+  owner: { finance: 'edit', invoices: 'edit', dues: 'edit', crm: 'edit' },
+  accountant: { finance: 'edit', invoices: 'edit', dues: 'edit', crm: 'none' },
+  sales: { finance: 'none', invoices: 'none', dues: 'none', crm: 'edit' },
+  partner: { finance: 'view', invoices: 'view', dues: 'view', crm: 'view' },
+};
+const effPerms = (role, custom) => {
+  if (role === 'owner') return { ...PRESETS.owner };
+  let o = {}; try { o = custom ? JSON.parse(custom) : {}; } catch {}
+  const out = { ...(PRESETS[role] || PRESETS.partner) }; for (const m of MODS) if (o[m] in LV) out[m] = o[m]; return out;
+};
+const cleanPerms = (p) => { if (p === null) return null; if (typeof p !== 'object') throw new HttpError(400, 'دسترسی‌ها نامعتبر است'); const o = {}; for (const m of MODS) { if (!(p[m] in LV)) throw new HttpError(400, 'سطح دسترسی نامعتبر است'); o[m] = p[m]; } return JSON.stringify(o); };
+const lvl = (u, m) => LV[u.perms[m]] || 0;
+const need2 = (u, m, l = 'view') => { if (lvl(u, m) < LV[l]) throw new HttpError(403, 'دسترسی به این بخش برای شما مجاز نیست'); };
 const can = {
-  write: (u) => u.role === 'owner' || u.role === 'accountant',
+  write: (u) => MODS.some((m) => lvl(u, m) >= 2), // حداقل در یک بخش اجازهٔ ثبت دارد (بررسی دقیق هر بخش در guardRoute است)
   delete: (u) => u.role === 'owner',
   admin: (u) => u.role === 'owner',
 };
+const ROLE_FA = { owner: 'مدیر', accountant: 'مالی', sales: 'فروش', partner: 'شریک' };
 const audit = (u, action, detail) => db.prepare('INSERT INTO audit(user_id,action,detail) VALUES(?,?,?)').run(u ? u.id : null, action, JSON.stringify(detail));
 
 // ---------- ابزارها ----------
@@ -147,19 +180,19 @@ const REQUIRE_2FA = process.env.REQUIRE_2FA === '1';
 const currentUser = (req) => {
   const t = cookies(req).sid; if (!t || !/^[0-9a-f]{64}$/.test(t)) return null;
   const now = Date.now(), h = tokenHash(t);
-  const u = db.prepare('SELECT u.id,u.username,u.name,u.role,u.must_change,u.totp_enabled,s.last_seen FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires>? AND s.last_seen>? AND u.active=1').get(h, now, now - IDLE_TTL);
+  const u = db.prepare('SELECT u.id,u.username,u.name,u.role,u.perms,u.must_change,u.totp_enabled,s.last_seen FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires>? AND s.last_seen>? AND u.active=1').get(h, now, now - IDLE_TTL);
   if (!u) return null;
   if (now - u.last_seen > 60e3) db.prepare('UPDATE sessions SET last_seen=? WHERE token_hash=?').run(now, h);
-  u.sid_hash = h; u.need_2fa_setup = REQUIRE_2FA && u.role === 'owner' && !u.totp_enabled ? 1 : 0;
+  u.perms = effPerms(u.role, u.perms); u.sid_hash = h; u.need_2fa_setup = REQUIRE_2FA && u.role === 'owner' && !u.totp_enabled ? 1 : 0;
   return u;
 };
-const publicUser = (u) => ({ id: u.id, name: u.name, role: u.role, username: u.username, must_change: !!u.must_change, totp_enabled: !!u.totp_enabled, need_2fa_setup: !!u.need_2fa_setup });
+const publicUser = (u) => ({ id: u.id, name: u.name, role: u.role, username: u.username, perms: u.perms || effPerms(u.role, null), must_change: !!u.must_change, totp_enabled: !!u.totp_enabled, need_2fa_setup: !!u.need_2fa_setup });
 function issueSession(req, res, u, body = {}) {
   const token = crypto.randomBytes(32).toString('hex'), now = Date.now();
   db.prepare('INSERT INTO sessions VALUES(?,?,?,?)').run(tokenHash(token), u.id, now + SESSION_TTL, now);
   db.prepare('DELETE FROM sessions WHERE user_id=? AND (expires<? OR last_seen<?)').run(u.id, now, now - IDLE_TTL);
   audit(u, 'login', { ip: clientIp(req) });
-  send(res, 200, { ...publicUser({ ...u, totp_enabled: u.totp_enabled }), ...body }, { 'Set-Cookie': sessionCookie(req, token, SESSION_TTL / 1000) });
+  send(res, 200, { ...publicUser({ ...u, perms: effPerms(u.role, u.perms) }), ...body }, { 'Set-Cookie': sessionCookie(req, token, SESSION_TTL / 1000) });
 }
 const clientIp = (req) => { // پشت پراکسی مورد اعتماد، آخرین مقدار XFF را خود پراکسی اضافه کرده است
   const x = req.headers['x-forwarded-for']; if (x) { const parts = String(x).split(',').map((v) => v.trim()).filter(Boolean); if (parts.length) return parts[parts.length - 1]; }
@@ -327,6 +360,23 @@ const ACC_BAL = `SELECT a.*, a.opening
   + COALESCE((SELECT SUM(CASE WHEN t.type='income' THEN t.amount ELSE -t.amount END) FROM transactions t WHERE t.account_id=a.id AND t.deleted_at IS NULL),0)
   + COALESCE((SELECT SUM(amount) FROM transfers WHERE to_account=a.id),0) - COALESCE((SELECT SUM(amount) FROM transfers WHERE from_account=a.id),0) AS balance FROM accounts a`;
 
+// کنترل دسترسی مرکزی: هر مسیر به یک «بخش» و «سطح» نیاز دارد (مسیرهای مدیریتی داخل خود مسیر با can.admin بررسی می‌شوند)
+function guardRoute(u, p, m, q) {
+  const w = m !== 'GET' && m !== 'HEAD', lv = w ? 'edit' : 'view';
+  if (/^\/api\/(transactions|summary|export\.csv|report)(\/|$)/.test(p)) return need2(u, 'finance', lv);
+  if (p === '/api/import') return need2(u, 'finance', 'edit');
+  if (p === '/api/accounts' && !w) return need2(u, 'finance', 'view');
+  if (p === '/api/transfers') return w && m === 'POST' ? need2(u, 'finance', 'edit') : need2(u, 'finance', 'view');
+  if (p === '/api/categories' && m === 'POST') return need2(u, 'finance', 'edit');
+  if (/^\/api\/invoices(\/|$)/.test(p)) { need2(u, 'invoices', lv); if (/\/pay$/.test(p)) need2(u, 'finance', 'edit'); return; }
+  if (/^\/api\/dues(\/|$)/.test(p)) { need2(u, 'dues', lv); if (/\/settle$/.test(p)) need2(u, 'finance', 'edit'); return; }
+  if (p === '/api/customers/lookup') { if (lvl(u, 'crm') >= 1 || lvl(u, 'invoices') >= 2 || lvl(u, 'dues') >= 2) return; throw new HttpError(403, 'دسترسی به این بخش برای شما مجاز نیست'); }
+  if (/^\/api\/(customers|crm|notes)(\/|$)/.test(p)) return need2(u, 'crm', lv);
+}
+// کاربری که فاکتور/چک را نمی‌بیند، اعداد مالی مشتری را هم نمی‌بیند
+const FIN_FIELDS = ['invoiced', 'paid', 'due', 'count', 'last_invoice_date'];
+const redactCustomer = (u, r) => { if (lvl(u, 'invoices') >= 1) return r; const o = { ...r }; for (const k of FIN_FIELDS) delete o[k]; return o; };
+
 // ---------- مسیرها ----------
 async function api(req, res, url) {
   const m = req.method, p = url.pathname, q = Object.fromEntries(url.searchParams);
@@ -381,6 +431,7 @@ async function api(req, res, url) {
   const gateOk = p === '/api/me' || p === '/api/password' || p.startsWith('/api/2fa');
   if ((user.must_change || user.need_2fa_setup) && !gateOk) throw new HttpError(403, user.must_change ? 'ابتدا رمز عبور خود را تغییر دهید' : 'ابتدا ورود دومرحله‌ای را فعال کنید');
 
+  guardRoute(user, p, m, q);
   if (p === '/api/me') return send(res, 200, publicUser(user));
 
   if (p === '/api/password' && m === 'POST') {
@@ -488,7 +539,8 @@ async function api(req, res, url) {
     const t = db.prepare(`SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount END),0) inc, COALESCE(SUM(CASE WHEN type='expense' THEN amount END),0) exp, COUNT(*) n FROM transactions t ${where}`).get(...params);
     const byCat = db.prepare(`SELECT t.type, COALESCE(c.name,'بدون دسته') name, SUM(t.amount) total FROM transactions t LEFT JOIN categories c ON c.id=t.category_id ${where} GROUP BY t.type, c.id ORDER BY total DESC`).all(...params);
     const byDay = db.prepare(`SELECT t.date, SUM(CASE WHEN t.type='income' THEN t.amount ELSE 0 END) inc, SUM(CASE WHEN t.type='expense' THEN t.amount ELSE 0 END) exp FROM transactions t ${where} GROUP BY t.date ORDER BY t.date`).all(...params);
-    return send(res, 200, { income: t.inc, expense: t.exp, balance: t.inc - t.exp, count: t.n, byCat, byDay });
+    const receivable = lvl(user, 'invoices') >= 1 ? db.prepare("SELECT id FROM invoices WHERE deleted_at IS NULL AND status='unpaid'").all().reduce((acc, r) => acc + invoiceFull(r.id).total, 0) : null;
+    return send(res, 200, { income: t.inc, expense: t.exp, balance: t.inc - t.exp, count: t.n, byCat, byDay, receivable });
   }
 
   if (p === '/api/export.csv' && m === 'GET') {
@@ -503,6 +555,7 @@ async function api(req, res, url) {
 
 
   // ---------- مشتریان (CRM) ----------
+  if (p === '/api/customers/lookup' && m === 'GET') return send(res, 200, db.prepare("SELECT id,name,company,phone,address,status FROM customers WHERE deleted_at IS NULL ORDER BY name LIMIT 3000").all());
   if (p === '/api/team' && m === 'GET') return send(res, 200, db.prepare('SELECT id,name,role FROM users WHERE active=1 ORDER BY id').all());
   if (p === '/api/customers') {
     if (m === 'GET') {
@@ -514,11 +567,13 @@ async function api(req, res, url) {
       let rows = all;
       if (STATUSES.includes(q.status)) rows = rows.filter((r) => r.status === q.status);
       if (q.tag) rows = rows.filter((r) => r.tags.split(',').includes(q.tag));
-      if (seg[q.segment]) rows = rows.filter(seg[q.segment]);
+      if (seg[q.segment] && !(q.segment === 'due' && lvl(user, 'invoices') < 1)) rows = rows.filter(seg[q.segment]);
       if (+q.assignee) rows = rows.filter((r) => r.assignee === +q.assignee);
       if (q.q) { const x = String(q.q).toLowerCase(), pk = String(q.q).replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/\D/g, '').replace(/^0+/, ''); rows = rows.filter((r) => [r.name, r.company, r.email, r.address, r.tags, r.phone].some((v) => String(v || '').toLowerCase().includes(x)) || (pk.length >= 4 && phoneKey(r.phone).includes(pk))); }
-      const cmp = { recent: (a, b) => (b.updated_at > a.updated_at ? 1 : -1), name: (a, b) => a.name.localeCompare(b.name, 'fa'), due: (a, b) => b.due - a.due, revenue: (a, b) => b.paid - a.paid, followup: (a, b) => (a.follow_up || '9999').localeCompare(b.follow_up || '9999'), contact: (a, b) => (a.last_contact || a.created_at).localeCompare(b.last_contact || b.created_at) }[q.sort] || ((a, b) => (b.updated_at > a.updated_at ? 1 : -1));
+      const sortKey = (lvl(user, 'invoices') < 1 && (q.sort === 'due' || q.sort === 'revenue')) ? 'recent' : q.sort;
+      const cmp = { recent: (a, b) => (b.updated_at > a.updated_at ? 1 : -1), name: (a, b) => a.name.localeCompare(b.name, 'fa'), due: (a, b) => b.due - a.due, revenue: (a, b) => b.paid - a.paid, followup: (a, b) => (a.follow_up || '9999').localeCompare(b.follow_up || '9999'), contact: (a, b) => (a.last_contact || a.created_at).localeCompare(b.last_contact || b.created_at) }[sortKey] || ((a, b) => (b.updated_at > a.updated_at ? 1 : -1));
       rows = rows.sort(cmp).slice(0, 1000);
+      if (lvl(user, 'invoices') < 1) { delete facets.segments.due; rows = rows.map((r) => redactCustomer(user, r)); }
       return send(res, 200, { rows, counts: facets.counts, facets });
     }
     if (m === 'POST') {
@@ -556,7 +611,8 @@ async function api(req, res, url) {
     const debtors = all.filter((r) => r.due > 0).sort((a, b) => b.due - a.due).slice(0, 6).map((r) => ({ id: r.id, name: r.name, company: r.company, phone: r.phone, status: r.status, due: r.due }));
     const srcs = {}; for (const r of all) { const k = r.source || 'نامشخص'; srcs[k] = (srcs[k] || 0) + 1; }
     const stats = { total: all.length, new30: all.filter((r) => r.created_at.slice(0, 10) >= addDays(today, -30)).length, outstanding: all.reduce((a, r) => a + r.due, 0), revenue: all.reduce((a, r) => a + r.paid, 0), followupsDue: all.filter((r) => r.follow_up && r.follow_up <= today && r.status !== 'inactive').length, stale: all.filter((r) => r.status !== 'inactive' && (r.last_contact || r.created_at).slice(0, 10) < addDays(today, -30)).length };
-    const totalDue = [...customerFinance().values()].reduce((a, f) => a + f.due, 0);
+    let totalDue = [...customerFinance().values()].reduce((a, f) => a + f.due, 0);
+    if (lvl(user, 'invoices') < 1) { delete stats.outstanding; delete stats.revenue; debtors.length = 0; totalDue = 0; }
     return send(res, 200, { counts, followups, debtors, totalDue, stats, sources: Object.entries(srcs).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, n]) => ({ name, n })) });
   }
   if ((mm = p.match(/^\/api\/customers\/(\d+)$/))) {
@@ -567,7 +623,10 @@ async function api(req, res, url) {
       const invoices = db.prepare('SELECT id FROM invoices WHERE customer_id=? AND deleted_at IS NULL ORDER BY number DESC').all(id).map((r) => { const v = invoiceFull(r.id); v.paid_date = v.tx_id ? (db.prepare('SELECT date FROM transactions WHERE id=?').get(v.tx_id) || {}).date || null : null; return v; });
       const dues = db.prepare('SELECT id,kind,direction,title,number,amount,due_date,status,done_date FROM dues WHERE customer_id=? AND deleted_at IS NULL ORDER BY due_date DESC').all(id);
       const asg = c.assignee ? (db.prepare('SELECT name FROM users WHERE id=?').get(c.assignee) || {}).name : null;
-      return send(res, 200, { ...c, assignee_name: asg, ...(customerFinance(id).get(id) || { count: 0, invoiced: 0, paid: 0, due: 0 }), notes, invoices, dues });
+      const detail = { ...c, assignee_name: asg, ...(customerFinance(id).get(id) || { count: 0, invoiced: 0, paid: 0, due: 0 }), notes, invoices, dues };
+      if (lvl(user, 'invoices') < 1) { for (const k of FIN_FIELDS) delete detail[k]; delete detail.invoices; }
+      if (lvl(user, 'dues') < 1) delete detail.dues;
+      return send(res, 200, detail);
     }
     if (m === 'PUT') {
       need(can.write(user)); const b = await readBody(req);
@@ -758,6 +817,7 @@ async function api(req, res, url) {
     if (!entity || !Number.isInteger(eid) || eid <= 0) throw new HttpError(400, 'پارامتر نامعتبر');
     const exists = db.prepare(`SELECT 1 FROM ${entity === 'due' ? 'dues' : 'transactions'} WHERE id=? AND deleted_at IS NULL`).get(eid);
     if (!exists) throw new HttpError(404, 'مورد یافت نشد');
+    need2(user, entity === 'due' ? 'dues' : 'finance', m === 'GET' ? 'view' : 'edit');
     if (m === 'GET') return send(res, 200, db.prepare('SELECT a.id,a.name,a.mime,a.size,a.created_at,u.name AS author FROM attachments a LEFT JOIN users u ON u.id=a.created_by WHERE a.entity=? AND a.entity_id=? ORDER BY a.id').all(entity, eid));
     if (m === 'POST') {
       need(can.write(user));
@@ -773,6 +833,7 @@ async function api(req, res, url) {
   }
   if ((mm = p.match(/^\/api\/attachments\/(\d+)$/))) {
     const a = db.prepare('SELECT * FROM attachments WHERE id=?').get(+mm[1]); if (!a) throw new HttpError(404, 'یافت نشد');
+    need2(user, a.entity === 'due' ? 'dues' : 'finance', m === 'GET' ? 'view' : 'edit');
     if (m === 'GET') {
       const isImg = a.mime.startsWith('image/'), fn = encodeURIComponent(a.name);
       return send(res, 200, Buffer.from(a.data), { 'Content-Type': a.mime, 'Content-Disposition': `${isImg ? 'inline' : 'attachment'}; filename*=UTF-8''${fn}`, 'Content-Security-Policy': "default-src 'none'; sandbox", 'Cache-Control': 'private, max-age=300' });
@@ -922,14 +983,14 @@ async function api(req, res, url) {
 
   if (p === '/api/users') {
     need(can.admin(user));
-    if (m === 'GET') return send(res, 200, db.prepare('SELECT id,username,name,role,active,totp_enabled,must_change FROM users ORDER BY id').all());
+    if (m === 'GET') return send(res, 200, db.prepare('SELECT id,username,name,role,active,totp_enabled,must_change,perms FROM users ORDER BY id').all().map((r) => ({ ...r, perms_custom: !!r.perms && r.role !== 'owner', perms: effPerms(r.role, r.perms) })));
     if (m === 'POST') {
       const b = await readBody(req);
       const username = String(b.username || '').trim().toLowerCase();
       if (!/^[a-z0-9_.]{3,30}$/.test(username)) throw new HttpError(400, 'نام کاربری: ۳ تا ۳۰ حرف انگلیسی/عدد');
-      if (!['owner', 'accountant', 'partner'].includes(b.role)) throw new HttpError(400, 'نقش نامعتبر');
+      if (!['owner', 'accountant', 'sales', 'partner'].includes(b.role)) throw new HttpError(400, 'نقش نامعتبر');
       const bad = S.checkPassword(b.password, username); if (bad) throw new HttpError(400, bad);
-      try { db.prepare('INSERT INTO users(username,name,role,pass,must_change) VALUES(?,?,?,?,1)').run(username, String(b.name || username).slice(0, 60), b.role, hash(String(b.password))); }
+      try { db.prepare('INSERT INTO users(username,name,role,pass,must_change,perms) VALUES(?,?,?,?,1,?)').run(username, String(b.name || username).slice(0, 60), b.role, hash(String(b.password)), b.role !== 'owner' && b.perms ? cleanPerms(b.perms) : null); }
       catch { throw new HttpError(409, 'این نام کاربری وجود دارد'); }
       audit(user, 'user.create', { username, role: b.role });
       return send(res, 201, { ok: true });
@@ -938,7 +999,8 @@ async function api(req, res, url) {
   if ((mm = p.match(/^\/api\/users\/(\d+)$/)) && m === 'PUT') {
     need(can.admin(user)); const id = +mm[1]; const b = await readBody(req);
     if (id === user.id && (b.active === false || (b.role && b.role !== 'owner'))) throw new HttpError(400, 'نمی‌توانید دسترسی خودتان را کم کنید');
-    if (b.role && ['owner', 'accountant', 'partner'].includes(b.role)) db.prepare('UPDATE users SET role=? WHERE id=?').run(b.role, id);
+    if (b.role && ['owner', 'accountant', 'sales', 'partner'].includes(b.role)) db.prepare('UPDATE users SET role=?' + (b.role !== (db.prepare('SELECT role FROM users WHERE id=?').get(id) || {}).role && !('perms' in b) ? ', perms=NULL' : '') + ' WHERE id=?').run(b.role, id);
+    if ('perms' in b) { const t = db.prepare('SELECT role FROM users WHERE id=?').get(id); if (t && t.role !== 'owner') db.prepare('UPDATE users SET perms=? WHERE id=?').run(cleanPerms(b.perms), id); }
     if (typeof b.active === 'boolean') { db.prepare('UPDATE users SET active=? WHERE id=?').run(b.active ? 1 : 0, id); if (!b.active) db.prepare('DELETE FROM sessions WHERE user_id=?').run(id); }
     if (b.password) {
       const t = db.prepare('SELECT username FROM users WHERE id=?').get(id); if (!t) throw new HttpError(404, 'کاربر یافت نشد');
