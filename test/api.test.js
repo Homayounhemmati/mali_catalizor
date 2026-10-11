@@ -33,7 +33,17 @@ test('security headers & noindex', async () => {
   const r = await call('x', 'GET', '/');
   for (const h of ['content-security-policy', 'x-frame-options', 'x-content-type-options', 'permissions-policy', 'x-robots-tag']) assert.ok(r.headers.get(h), h);
   assert.match(r.headers.get('content-security-policy'), /script-src 'self'/);
-  assert.match((await call('x', 'GET', '/robots.txt')).body.toString(), /Disallow: \//);
+  assert.match((await call('x', 'GET', '/robots.txt')).body.toString(), /Disallow: \/\n/, 'robots.txt blocks everything');
+  for (const ua of ['Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)', 'Mozilla/5.0 (compatible; bingbot/2.0)', 'GPTBot/1.1', 'ClaudeBot/1.0', 'Mozilla/5.0 (compatible; AhrefsBot/7.0)', 'TelegramBot (like TwitterBot)', 'WhatsApp/2.23', 'facebookexternalhit/1.1', 'Slackbot-LinkExpanding 1.0', 'DuckDuckBot/1.1']) {
+    const rb = await call('x', 'GET', '/', undefined, { headers: { 'User-Agent': ua } });
+    assert.equal(rb.status, 404, 'crawler gets 404: ' + ua); assert.ok(!/حسابداری|<html/i.test(rb.body.toString()), 'no page content leaks to crawlers');
+    assert.equal((await call('x', 'GET', '/app.js', undefined, { headers: { 'User-Agent': ua } })).status, 404);
+  }
+  assert.equal((await call('x', 'GET', '/', undefined, { headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) AppleWebKit/605.1.15 Safari/604.1' } })).status, 200, 'real browsers are unaffected');
+  assert.equal((await call('x', 'GET', '/healthz', undefined, { headers: { 'User-Agent': 'UptimeRobot/2.0' } })).status, 200, 'health check stays available');
+  assert.match(r.headers.get('x-robots-tag'), /noindex/);
+  assert.match((await call('x', 'GET', '/')).body.toString(), /<meta name="robots" content="noindex/);
+  assert.match((await call('x', 'GET', '/api/me')).headers.get('x-robots-tag'), /noindex/, 'API responses are noindex too');
   assert.equal((await call('x', 'GET', '/server.js')).headers.get('content-type').includes('html'), true, 'source must not be served');
   assert.equal((await call('x', 'GET', '/..%2fserver.js')).headers.get('content-type').includes('html'), true);
 });
@@ -87,7 +97,9 @@ test('users: policy, roles', async () => {
   assert.equal((await call('owner', 'POST', '/api/users', { username: 'acc', name: 'Acc', password: 'weak', role: 'accountant' })).status, 400);
   assert.equal((await call('owner', 'POST', '/api/users', { username: 'acc', name: 'Acc', password: 'Temp-Pass-Alpha1', role: 'accountant' })).status, 201);
   assert.equal((await call('owner', 'POST', '/api/users', { username: 'par', name: 'Par', password: 'Temp-Pass-Beta22', role: 'partner' })).status, 201);
-  for (const [who, u, pw, np] of [['acc', 'acc', 'Temp-Pass-Alpha1', 'Final-Pass-Alpha1'], ['par', 'par', 'Temp-Pass-Beta22', 'Final-Pass-Beta22']]) {
+  assert.equal((await call('owner', 'POST', '/api/users', { username: 'sal', name: 'Sal', password: 'Temp-Pass-Gamma33', role: 'sales' })).status, 201);
+  assert.equal((await call('owner', 'POST', '/api/users', { username: 'x', name: 'X', password: 'Temp-Pass-Gamma33', role: 'hacker' })).status, 400);
+  for (const [who, u, pw, np] of [['acc', 'acc', 'Temp-Pass-Alpha1', 'Final-Pass-Alpha1'], ['par', 'par', 'Temp-Pass-Beta22', 'Final-Pass-Beta22'], ['sal', 'sal', 'Temp-Pass-Gamma33', 'Final-Pass-Gamma33']]) {
     assert.equal((await login(who, u, pw)).body.must_change, true);
     assert.equal((await call(who, 'POST', '/api/password', { old: pw, new: np })).status, 200);
   }
@@ -175,6 +187,78 @@ test('report & import & csv injection', async () => {
   assert.equal((await call('acc', 'POST', '/api/import', { rows: rows.slice(0, 2) })).body.skipped, 2, 'duplicates skipped');
   const csv = (await call('owner', 'GET', '/api/export.csv')).body.toString();
   assert.ok(csv.includes('"\'=cmd|calc"'), 'formula injection neutralized'); 
+});
+
+
+test('CRM: tags, assignee, segments, duplicates, auto notes, import', async () => {
+  const team = (await call('sal', 'GET', '/api/team')).body; assert.ok(team.length >= 3);
+  const accId = team.find((u) => u.role === 'sales').id;
+  const c1 = await call('sal', 'POST', '/api/customers', { name: 'سارا', phone: '0912 111 2233', tags: 'عمده، VIP,عمده', status: 'lead', assignee: accId, follow_up: '2026-10-01', follow_up_note: 'ارسال پیش‌فاکتور' });
+  assert.equal(c1.status, 201); assert.equal(c1.body.tags, 'عمده,VIP', 'tags normalized + deduped');
+  const dup = await call('sal', 'POST', '/api/customers', { name: 'سارا دوم', phone: '۰۹۱۲۱۱۱۲۲۳۳' });
+  assert.equal(dup.status, 409); assert.equal(dup.body.duplicate_id, c1.body.id, 'duplicate phone detected (persian digits too)');
+  assert.equal((await call('sal', 'POST', '/api/customers', { name: 'سارا دوم', phone: '09121112233', force: true })).status, 201);
+  assert.equal((await call('par', 'POST', '/api/customers', { name: 'x' })).status, 403);
+  assert.equal((await call('sal', 'POST', '/api/customers', { name: 'x', assignee: 9999 })).status, 400);
+  const list = (await call('par', 'GET', `/api/customers?today=2026-10-11&segment=followup`)).body;
+  assert.equal(list.rows.length, 1); assert.equal(list.rows[0].assignee_name, 'Sal'); assert.ok(list.facets.segments.followup >= 1); assert.equal(list.facets.tags['VIP'], 1);
+  assert.equal((await call('par', 'GET', '/api/customers?tag=VIP')).body.rows.length, 1);
+  assert.equal((await call('par', 'GET', `/api/customers?assignee=${accId}`)).body.rows.length, 1);
+  assert.equal((await call('par', 'GET', '/api/customers?q=' + encodeURIComponent('۰۹۱۲۱۱۱'))).body.rows.length, 2, 'search by phone with persian digits');
+  assert.equal((await call('sal', 'PUT', `/api/customers/${c1.body.id}`, { status: 'vip' })).status, 200);
+  const d = (await call('par', 'GET', `/api/customers/${c1.body.id}`)).body;
+  assert.ok(d.notes.some((n) => /وضعیت از «سرنخ» به «ویژه»/.test(n.text)), 'status change leaves a timeline note'); assert.equal(d.assignee_name, 'Sal'); assert.ok(Array.isArray(d.dues));
+  const link = await call('acc', 'POST', '/api/dues', { direction: 'in', number: '55', party: 'سارا', customer_id: c1.body.id, amount: 100, due_date: '2026-10-20' });
+  assert.equal((await call('par', 'GET', `/api/customers/${c1.body.id}`)).body.dues.length, 1);
+  const im = await call('sal', 'POST', '/api/customers/import', { rows: [{ name: 'وارداتی ۱', phone: '09350000001', tags: 'a,b' }, { name: 'سارا', phone: '09121112233' }, { name: '' }] });
+  assert.equal(im.body.imported, 1); assert.equal(im.body.skipped, 1); assert.equal(im.body.bad, 1);
+  const ov = (await call('par', 'GET', '/api/crm/overview?today=2026-10-11')).body; assert.ok(ov.stats.total >= 3); assert.ok(Array.isArray(ov.sources));
+  assert.equal((await call('par', 'POST', '/api/customers/import', { rows: [{ name: 'x' }] })).status, 403);
+  void link;
+});
+
+
+test('RBAC: sales only CRM, accountant only finance, custom perms', async () => {
+  // فروش: CRM بله، مالی نه
+  for (const u of ['/api/transactions', '/api/summary', '/api/invoices', '/api/dues', '/api/accounts', '/api/report?from=2026-01-01&to=2026-12-31', '/api/export.csv', '/api/transfers'])
+    assert.equal((await call('sal', 'GET', u)).status, 403, 'sales blocked from ' + u);
+  assert.equal((await call('sal', 'POST', '/api/transactions', { type: 'income', amount: 1, date: '2026-01-01' })).status, 403);
+  assert.equal((await call('sal', 'GET', '/api/customers')).status, 200);
+  assert.equal((await call('sal', 'GET', '/api/customers/lookup')).status, 200);
+  assert.equal((await call('sal', 'GET', '/api/users')).status, 403); assert.equal((await call('sal', 'GET', '/api/backups')).status, 403);
+  const cl = (await call('sal', 'GET', '/api/customers')).body; assert.ok(cl.rows.length >= 1);
+  for (const r of cl.rows) for (const k of ['invoiced', 'paid', 'due', 'count']) assert.equal(k in r, false, 'finance field hidden from sales: ' + k);
+  assert.equal('due' in cl.facets.segments, false);
+  const cid = cl.rows[0].id, det = (await call('sal', 'GET', `/api/customers/${cid}`)).body; assert.equal('invoices' in det, false); assert.equal('dues' in det, false); assert.equal('invoiced' in det, false);
+  const ov = (await call('sal', 'GET', '/api/crm/overview')).body; assert.equal('outstanding' in ov.stats, false); assert.equal(ov.totalDue, 0);
+  assert.equal((await call('sal', 'POST', '/api/invoices', { customer: 'x', date: '2026-10-01', items: [{ title: 'a', qty: 1, price: 1 }] })).status, 403);
+  // مالی: مالی/فاکتور/چک بله، CRM نه (ولی فهرست ساده مشتری برای فاکتور بله)
+  assert.equal((await call('acc', 'GET', '/api/customers')).status, 403); assert.equal((await call('acc', 'GET', '/api/crm/overview')).status, 403);
+  assert.equal((await call('acc', 'POST', '/api/customers', { name: 'نباید' })).status, 403);
+  const lk = await call('acc', 'GET', '/api/customers/lookup'); assert.equal(lk.status, 200); assert.ok(!('tags' in lk.body[0]) && !('follow_up' in lk.body[0]), 'lookup exposes contact fields only');
+  const inv = await call('acc', 'POST', '/api/invoices', { customer_id: lk.body[0].id, customer: lk.body[0].name, date: '2026-10-02', items: [{ title: 'خدمت', qty: 1, price: 1000 }] }); assert.equal(inv.status, 201);
+  // پرداخت فاکتور هم دسترسی فاکتور و هم مالی می‌خواهد
+  assert.equal((await call('owner', 'PUT', `/api/users/${(await call('owner', 'GET', '/api/users')).body.find((u) => u.username === 'sal').id}`, { perms: { finance: 'none', invoices: 'edit', dues: 'none', crm: 'edit' } })).status, 200);
+  assert.equal((await call('sal', 'POST', `/api/invoices/${inv.body.id}/pay`, { date: '2026-10-03' })).status, 403, 'pay needs finance edit too');
+  assert.equal((await call('acc', 'POST', `/api/invoices/${inv.body.id}/pay`, { date: '2026-10-03' })).status, 200);
+  // دسترسی سفارشی فروش: فاکتور ببیند → اعداد مالی مشتری ظاهر شود
+  const cl2 = (await call('sal', 'GET', '/api/customers')).body; assert.ok(cl2.rows.every((r) => 'due' in r), 'custom perms reveal finance fields');
+  assert.equal((await call('sal', 'GET', '/api/invoices')).status, 200); assert.equal((await call('sal', 'GET', '/api/transactions')).status, 403);
+  // اعتبارسنجی و بازنشانی
+  const salId = (await call('owner', 'GET', '/api/users')).body.find((u) => u.username === 'sal').id;
+  assert.equal((await call('owner', 'PUT', `/api/users/${salId}`, { perms: { finance: 'edit', invoices: 'bad', dues: 'none', crm: 'edit' } })).status, 400);
+  assert.equal((await call('acc', 'PUT', `/api/users/${salId}`, { perms: { finance: 'edit', invoices: 'edit', dues: 'edit', crm: 'edit' } })).status, 403, 'only owner can grant access');
+  const row = (await call('owner', 'GET', '/api/users')).body.find((u) => u.id === salId); assert.equal(row.perms_custom, true);
+  assert.equal((await call('owner', 'PUT', `/api/users/${salId}`, { role: 'sales' })).status, 200);
+  assert.equal((await call('owner', 'PUT', `/api/users/${salId}`, { perms: null })).status, 200);
+  assert.equal((await call('sal', 'GET', '/api/invoices')).status, 403, 'reset returns to sales preset');
+  const me = (await call('sal', 'GET', '/api/me')).body; assert.deepEqual(me.perms, { finance: 'none', invoices: 'none', dues: 'none', crm: 'edit' });
+  // شریک: همه را می‌بیند، چیزی ثبت نمی‌کند
+  for (const u of ['/api/transactions', '/api/invoices', '/api/dues', '/api/customers', '/api/accounts']) assert.equal((await call('par', 'GET', u)).status, 200, 'partner views ' + u);
+  assert.equal((await call('par', 'POST', '/api/customers', { name: 'x' })).status, 403); assert.equal((await call('par', 'POST', '/api/dues', { direction: 'in', amount: 1, due_date: '2026-10-01' })).status, 403);
+  // مالک همیشه همه چیز را دارد حتی اگر perms دستکاری شود
+  assert.equal((await call('owner', 'PUT', `/api/users/1`, { perms: { finance: 'none', invoices: 'none', dues: 'none', crm: 'none' } })).status, 200);
+  assert.equal((await call('owner', 'GET', '/api/transactions')).status, 200);
 });
 
 test('soft delete, trash and backups', async () => {

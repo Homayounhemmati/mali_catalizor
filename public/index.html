@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0b1020">
+<meta name="theme-color" content="#090d12">
 <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
 <meta name="googlebot" content="noindex, nofollow">
 <meta name="description" content="حسابداری کاتالیزور؛ مدیریت مالی، فاکتور و مشتریان">
@@ -52,16 +52,25 @@
 </defs></svg>
 
 <section id="login" class="screen hidden">
-  <form class="card login-card" id="loginForm" autocomplete="on">
-    <div class="logo"><svg class="mark"><use href="#i-mark"/></svg></div>
-    <h1>حسابداری کاتالیزور</h1>
-    <p class="muted">مدیریت مالی، فاکتور و مشتریان</p>
-    <label>نام کاربری<input name="username" autocomplete="username" required dir="ltr"></label>
-    <label>رمز عبور<input name="password" type="password" autocomplete="current-password" required dir="ltr"></label>
-    <label id="codeWrap" class="hidden">کد ورود دومرحله‌ای (یا کد بازیابی)<input name="code" inputmode="numeric" autocomplete="one-time-code" dir="ltr" maxlength="11" placeholder="123456"></label>
-    <button class="btn primary big" type="submit" id="loginBtn">ورود</button>
-    <div class="err" id="loginErr"></div>
-  </form>
+  <div class="login-split">
+    <div class="login-brand">
+      <div class="lb-top"><span class="logo"><svg class="mark"><use href="#i-mark"/></svg></span><span>حسابداری کاتالیزور</span></div>
+      <div class="lb-mid"><h2>مدیریت مالی،<br><em>شفاف</em> و دقیق.</h2><p>تراکنش‌ها، فاکتورها، مشتریان و چک‌ها؛ همه در یک‌جا، با امنیت بالا و دسترسی بر اساس نقش.</p>
+        <ul><li>ورود دومرحله‌ای و نشست امن</li><li>بکاپ خودکار روزانه</li><li>گزارش‌های آماده چاپ</li></ul></div>
+      <div class="lb-foot">© کاتالیزور</div>
+    </div>
+    <div class="login-form-wrap">
+      <form class="card login-card" id="loginForm" autocomplete="on">
+        <h1>ورود به حساب</h1>
+        <p class="muted">نام کاربری و رمز عبور خود را وارد کنید</p>
+        <label>نام کاربری<input name="username" autocomplete="username" required dir="ltr"></label>
+        <label>رمز عبور<input name="password" type="password" autocomplete="current-password" required dir="ltr"></label>
+        <label id="codeWrap" class="hidden">کد ورود دومرحله‌ای (یا کد بازیابی)<input name="code" inputmode="numeric" autocomplete="one-time-code" dir="ltr" maxlength="11" placeholder="123456"></label>
+        <button class="btn primary big" type="submit" id="loginBtn">ورود</button>
+        <div class="err" id="loginErr"></div>
+      </form>
+    </div>
+  </div>
 </section>
 
 <div id="app" class="hidden">
@@ -89,7 +98,7 @@
   <main>
     <section id="tab-dash" class="tab">
       <div class="head"><div><h2 class="h2" id="greet">داشبورد</h2><p class="muted sub" id="todayLine"></p></div>
-        <div class="row"><button class="btn ghost" id="reportBtn"><svg class="ic"><use href="#i-report"/></svg> گزارش</button><button class="btn primary write-only" data-new><svg class="ic"><use href="#i-plus"/></svg> ثبت تراکنش</button></div></div>
+        <div class="row"><button class="btn ghost" id="reportBtn"><svg class="ic"><use href="#i-report"/></svg> گزارش</button><button class="btn primary fin-w" data-new><svg class="ic"><use href="#i-plus"/></svg> ثبت تراکنش</button></div></div>
       <div id="secBanner" class="banner hidden"></div>
       <div class="chips" id="range">
         <button data-r="month" class="active">این ماه</button><button data-r="30">۳۰ روز اخیر</button><button data-r="year">امسال</button><button data-r="all">همه</button>
@@ -115,7 +124,7 @@
 
     <section id="tab-tx" class="tab hidden">
       <div class="head"><div><h2 class="h2">تراکنش‌ها</h2><p class="muted sub">همه ورودی‌ها و خروجی‌ها</p></div>
-        <button class="btn primary write-only" data-new><svg class="ic"><use href="#i-plus"/></svg> ثبت تراکنش</button></div>
+        <button class="btn primary fin-w" data-new><svg class="ic"><use href="#i-plus"/></svg> ثبت تراکنش</button></div>
       <div class="toolbar wrap">
         <input id="fq" placeholder="جستجو…">
         <button class="btn ghost" id="ftoggle" type="button">⚙ فیلترها</button>
@@ -127,7 +136,7 @@
         <label class="inl">تا <span class="jdate" id="fto"></span></label>
         <button class="btn ghost" id="fclear">پاک کردن</button>
         <a class="btn ghost" id="csv" href="#">⬇ خروجی اکسل</a>
-        <button class="btn ghost write-only" id="impBtn" type="button"><svg class="ic"><use href="#i-up2"/></svg> ورود از اکسل</button>
+        <button class="btn ghost fin-w" id="impBtn" type="button"><svg class="ic"><use href="#i-up2"/></svg> ورود از اکسل</button>
         </div>
       </div>
       <div class="card nopad"><div class="tablewrap"><table id="txTable"></table></div></div>
@@ -136,20 +145,25 @@
 
     <section id="tab-inv" class="tab hidden">
       <div class="head"><div><h2 class="h2">فاکتورها</h2><p class="muted sub">صدور، چاپ و ثبت دریافت وجه</p></div>
-        <div class="row"><button class="btn ghost owner-only" id="bizBtn">⚙ اطلاعات کسب‌وکار</button><button class="btn primary write-only" id="newInv"><svg class="ic"><use href="#i-plus"/></svg> صدور فاکتور</button></div></div>
+        <div class="row"><button class="btn ghost owner-only" id="bizBtn">⚙ اطلاعات کسب‌وکار</button><button class="btn primary inv-w" id="newInv"><svg class="ic"><use href="#i-plus"/></svg> صدور فاکتور</button></div></div>
       <div class="card nopad"><div class="tablewrap"><table id="invTable"></table></div></div>
     </section>
 
     <section id="tab-crm" class="tab hidden">
-      <div class="head"><div><h2 class="h2">مشتریان</h2><p class="muted sub">مدیریت ارتباط با مشتری و پیگیری‌ها</p></div>
-        <button class="btn primary write-only" id="newCust"><svg class="ic"><use href="#i-plus"/></svg> مشتری جدید</button></div>
-      <div class="toolbar wrap"><input id="cq" placeholder="جستجو: نام، شرکت، تلفن، ایمیل"><div class="chips" id="cStatus"></div></div>
-      <div class="card nopad"><div class="tablewrap"><table id="custTable"></table></div></div>
+      <div class="head"><div><h2 class="h2">مشتریان</h2><p class="muted sub">مدیریت ارتباط با مشتری، پیگیری‌ها و مطالبات</p></div>
+        <div class="row crm-w"><button class="btn ghost" id="impCust" type="button"><svg class="ic"><use href="#i-up2"/></svg> ورود از فایل</button><button class="btn primary" id="newCust"><svg class="ic"><use href="#i-plus"/></svg> مشتری جدید</button></div></div>
+      <div class="kpis4" id="crmKpis"></div>
+      <div class="toolbar wrap crm-top"><input id="cq" placeholder="جستجو: نام، شرکت، تلفن، ایمیل، برچسب"><button class="btn ghost crm-more-btn" id="crmMore" type="button">⚙ فیلتر</button>
+        <div class="seg-view" id="crmView"><button data-v="list" title="لیست">☰<span class="lbl"> لیست</span></button><button data-v="board" title="برد">▦<span class="lbl"> برد</span></button></div></div>
+      <div class="chips segrow" id="crmSegs"></div>
+      <div class="crm-extra"><div class="toolbar wrap crm-filters"><div class="chips hidden" id="cStatus"></div><select id="cAsg"></select><select id="cSort"></select></div>
+        <div class="chips tagrow hidden" id="crmTags"></div></div>
+      <div id="crmBody"></div>
     </section>
 
     <section id="tab-dues" class="tab hidden">
       <div class="head"><div><h2 class="h2">چک‌ها و اقساط</h2><p class="muted sub">سررسید، یادآوری و تسویه</p></div>
-        <div class="row write-only"><button class="btn ghost" id="newInst">قسط‌بندی</button><button class="btn primary" id="newCheque"><svg class="ic"><use href="#i-plus"/></svg> چک جدید</button></div></div>
+        <div class="row due-w"><button class="btn ghost" id="newInst">قسط‌بندی</button><button class="btn primary" id="newCheque"><svg class="ic"><use href="#i-plus"/></svg> چک جدید</button></div></div>
       <div class="stats" id="dueStats"></div>
       <div class="toolbar wrap"><div class="chips" id="dStatus"></div>
         <select id="dDir"><option value="">دریافتی و پرداختی</option><option value="in">دریافتی</option><option value="out">پرداختی</option></select>
@@ -167,7 +181,7 @@
         <div class="card"><h3>علت‌های ورودی</h3><ul class="cats" id="catIn"></ul></div>
         <div class="card"><h3>علت‌های خروجی</h3><ul class="cats" id="catOut"></ul></div>
       </div>
-        <form class="card write-only inline-form" id="catForm">
+        <form class="card fin-w inline-form" id="catForm">
         <input name="name" placeholder="نام دسته جدید" required>
         <select name="type"><option value="income">ورودی</option><option value="expense">خروجی</option></select>
         <button class="btn primary">افزودن</button>
@@ -181,8 +195,9 @@
         <input name="username" placeholder="نام کاربری (انگلیسی)" dir="ltr" required>
         <input name="password" placeholder="رمز موقت (حداقل ۱۰ کاراکتر)" dir="ltr" autocomplete="new-password" required minlength="10">
         <select name="role">
-          <option value="accountant">حسابدار — ثبت و ویرایش</option>
-          <option value="partner">شریک — فقط مشاهده</option>
+          <option value="accountant">مالی (حسابدار): مالی، فاکتور و چک</option>
+          <option value="sales">فروش: فقط مشتریان (CRM)</option>
+          <option value="partner">شریک: فقط مشاهده</option>
           <option value="owner">مدیر — دسترسی کامل</option>
         </select>
         <button class="btn primary">افزودن کاربر</button>
@@ -201,5 +216,6 @@
 <div id="toast"></div>
 <script src="/app.js"></script>
 <script src="/features.js"></script>
+<script src="/crm.js"></script>
 </body>
 </html>

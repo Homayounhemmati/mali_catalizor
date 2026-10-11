@@ -82,10 +82,28 @@ if (!db.prepare('PRAGMA table_info(transactions)').all().some((c) => c.name === 
 if (!db.prepare('PRAGMA table_info(invoices)').all().some((c) => c.name === 'customer_id'))
   db.exec('ALTER TABLE invoices ADD COLUMN customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL');
 
+for (const [col, def] of [['tags', "TEXT NOT NULL DEFAULT ''"], ['follow_up_note', "TEXT NOT NULL DEFAULT ''"], ['assignee', 'INTEGER REFERENCES users(id) ON DELETE SET NULL']])
+  if (!db.prepare('PRAGMA table_info(customers)').all().some((c) => c.name === col)) db.exec(`ALTER TABLE customers ADD COLUMN ${col} ${def}`);
 for (const t of ['transactions', 'invoices', 'customers']) {
   const cols = db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
   if (!cols.includes('deleted_at')) db.exec(`ALTER TABLE ${t} ADD COLUMN deleted_at TEXT`);
   if (!cols.includes('deleted_by')) db.exec(`ALTER TABLE ${t} ADD COLUMN deleted_by INTEGER`);
+}
+
+// مهاجرت: نقش «فروش» و ستون دسترسی‌های سفارشی (CHECK قدیمی فقط سه نقش را می‌پذیرفت؛ جدول با همهٔ ستون‌ها بازسازی می‌شود)
+if (!db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").get().sql.includes("'sales'")) {
+  if (db.prepare('SELECT 1 FROM users LIMIT 1').get()) { // بکاپ پیش از مهاجرت
+    const bd = process.env.BACKUP_DIR || path.join(DATA_DIR, 'backups'); fs.mkdirSync(bd, { recursive: true, mode: 0o700 });
+    const f = path.join(bd, 'pre-roles-migration.db'); if (fs.existsSync(f)) fs.unlinkSync(f); db.exec(`VACUUM INTO '${f.replace(/'/g, "''")}'`); try { fs.chmodSync(f, 0o600); } catch {}
+  }
+  db.exec('PRAGMA foreign_keys=OFF'); db.exec('BEGIN');
+  try {
+    db.exec(`CREATE TABLE users_new(id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
+      role TEXT NOT NULL CHECK(role IN ('owner','accountant','sales','partner')), pass TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      totp_secret TEXT, totp_enabled INTEGER NOT NULL DEFAULT 0, totp_last INTEGER NOT NULL DEFAULT 0, recovery TEXT, must_change INTEGER NOT NULL DEFAULT 0, perms TEXT)`);
+    db.exec('INSERT INTO users_new(id,username,name,role,pass,active,created_at,totp_secret,totp_enabled,totp_last,recovery,must_change) SELECT id,username,name,role,pass,active,created_at,totp_secret,totp_enabled,totp_last,recovery,must_change FROM users');
+    db.exec('DROP TABLE users'); db.exec('ALTER TABLE users_new RENAME TO users'); db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; } finally { db.exec('PRAGMA foreign_keys=ON'); }
 }
 
 // ---------- رمز عبور ----------
@@ -111,11 +129,28 @@ if (!db.prepare('SELECT 1 FROM accounts LIMIT 1').get()) db.prepare("INSERT INTO
 
 // ---------- نقش‌ها ----------
 // owner: همه‌چیز | accountant: ثبت/ویرایش تراکنش و دسته‌ها | partner: فقط مشاهده
+// دسترسی هر کاربر: چهار بخش × سه سطح (none / view / edit). نقش فقط پیش‌فرض را می‌دهد؛ مدیر می‌تواند برای هر نفر تغییر دهد.
+const MODS = ['finance', 'invoices', 'dues', 'crm'], LV = { none: 0, view: 1, edit: 2 };
+const PRESETS = {
+  owner: { finance: 'edit', invoices: 'edit', dues: 'edit', crm: 'edit' },
+  accountant: { finance: 'edit', invoices: 'edit', dues: 'edit', crm: 'none' },
+  sales: { finance: 'none', invoices: 'none', dues: 'none', crm: 'edit' },
+  partner: { finance: 'view', invoices: 'view', dues: 'view', crm: 'view' },
+};
+const effPerms = (role, custom) => {
+  if (role === 'owner') return { ...PRESETS.owner };
+  let o = {}; try { o = custom ? JSON.parse(custom) : {}; } catch {}
+  const out = { ...(PRESETS[role] || PRESETS.partner) }; for (const m of MODS) if (o[m] in LV) out[m] = o[m]; return out;
+};
+const cleanPerms = (p) => { if (p === null) return null; if (typeof p !== 'object') throw new HttpError(400, 'دسترسی‌ها نامعتبر است'); const o = {}; for (const m of MODS) { if (!(p[m] in LV)) throw new HttpError(400, 'سطح دسترسی نامعتبر است'); o[m] = p[m]; } return JSON.stringify(o); };
+const lvl = (u, m) => LV[u.perms[m]] || 0;
+const need2 = (u, m, l = 'view') => { if (lvl(u, m) < LV[l]) throw new HttpError(403, 'دسترسی به این بخش برای شما مجاز نیست'); };
 const can = {
-  write: (u) => u.role === 'owner' || u.role === 'accountant',
+  write: (u) => MODS.some((m) => lvl(u, m) >= 2), // حداقل در یک بخش اجازهٔ ثبت دارد (بررسی دقیق هر بخش در guardRoute است)
   delete: (u) => u.role === 'owner',
   admin: (u) => u.role === 'owner',
 };
+const ROLE_FA = { owner: 'مدیر', accountant: 'مالی', sales: 'فروش', partner: 'شریک' };
 const audit = (u, action, detail) => db.prepare('INSERT INTO audit(user_id,action,detail) VALUES(?,?,?)').run(u ? u.id : null, action, JSON.stringify(detail));
 
 // ---------- ابزارها ----------
@@ -145,19 +180,19 @@ const REQUIRE_2FA = process.env.REQUIRE_2FA === '1';
 const currentUser = (req) => {
   const t = cookies(req).sid; if (!t || !/^[0-9a-f]{64}$/.test(t)) return null;
   const now = Date.now(), h = tokenHash(t);
-  const u = db.prepare('SELECT u.id,u.username,u.name,u.role,u.must_change,u.totp_enabled,s.last_seen FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires>? AND s.last_seen>? AND u.active=1').get(h, now, now - IDLE_TTL);
+  const u = db.prepare('SELECT u.id,u.username,u.name,u.role,u.perms,u.must_change,u.totp_enabled,s.last_seen FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires>? AND s.last_seen>? AND u.active=1').get(h, now, now - IDLE_TTL);
   if (!u) return null;
   if (now - u.last_seen > 60e3) db.prepare('UPDATE sessions SET last_seen=? WHERE token_hash=?').run(now, h);
-  u.sid_hash = h; u.need_2fa_setup = REQUIRE_2FA && u.role === 'owner' && !u.totp_enabled ? 1 : 0;
+  u.perms = effPerms(u.role, u.perms); u.sid_hash = h; u.need_2fa_setup = REQUIRE_2FA && u.role === 'owner' && !u.totp_enabled ? 1 : 0;
   return u;
 };
-const publicUser = (u) => ({ id: u.id, name: u.name, role: u.role, username: u.username, must_change: !!u.must_change, totp_enabled: !!u.totp_enabled, need_2fa_setup: !!u.need_2fa_setup });
+const publicUser = (u) => ({ id: u.id, name: u.name, role: u.role, username: u.username, perms: u.perms || effPerms(u.role, null), must_change: !!u.must_change, totp_enabled: !!u.totp_enabled, need_2fa_setup: !!u.need_2fa_setup });
 function issueSession(req, res, u, body = {}) {
   const token = crypto.randomBytes(32).toString('hex'), now = Date.now();
   db.prepare('INSERT INTO sessions VALUES(?,?,?,?)').run(tokenHash(token), u.id, now + SESSION_TTL, now);
   db.prepare('DELETE FROM sessions WHERE user_id=? AND (expires<? OR last_seen<?)').run(u.id, now, now - IDLE_TTL);
   audit(u, 'login', { ip: clientIp(req) });
-  send(res, 200, { ...publicUser({ ...u, totp_enabled: u.totp_enabled }), ...body }, { 'Set-Cookie': sessionCookie(req, token, SESSION_TTL / 1000) });
+  send(res, 200, { ...publicUser({ ...u, perms: effPerms(u.role, u.perms) }), ...body }, { 'Set-Cookie': sessionCookie(req, token, SESSION_TTL / 1000) });
 }
 const clientIp = (req) => { // پشت پراکسی مورد اعتماد، آخرین مقدار XFF را خود پراکسی اضافه کرده است
   const x = req.headers['x-forwarded-for']; if (x) { const parts = String(x).split(',').map((v) => v.trim()).filter(Boolean); if (parts.length) return parts[parts.length - 1]; }
@@ -230,13 +265,33 @@ function customerFinance(onlyId) {
   }
   return out;
 }
+const STATUS_FA = { lead: 'سرنخ', active: 'فعال', vip: 'ویژه', inactive: 'غیرفعال' };
+const normTags = (v) => {
+  const arr = Array.isArray(v) ? v : String(v || '').split(/[,،;\n]/);
+  return [...new Set(arr.map((x) => String(x).trim().replace(/\s+/g, ' ').slice(0, 24)).filter(Boolean))].slice(0, 10).join(',');
+};
+const phoneKey = (p) => String(p || '').replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/\D/g, '').slice(-10);
 function cleanCustomer(b) {
   const name = String(b.name || '').trim().slice(0, 120);
   if (!name) throw new HttpError(400, 'نام مشتری را وارد کنید');
   if (b.status && !STATUSES.includes(b.status)) throw new HttpError(400, 'وضعیت نامعتبر است');
   const t = (k, n) => String(b[k] || '').trim().slice(0, n);
-  return { name, company: t('company', 120), phone: t('phone', 40), email: t('email', 120), address: t('address', 300), status: b.status || 'lead', source: t('source', 60), note: t('note', 1000), follow_up: isDate(b.follow_up) ? b.follow_up : null };
+  let assignee = null;
+  if (b.assignee) { if (!db.prepare('SELECT 1 FROM users WHERE id=? AND active=1').get(+b.assignee)) throw new HttpError(400, 'مسئول پیگیری نامعتبر است'); assignee = +b.assignee; }
+  const follow_up = isDate(b.follow_up) ? b.follow_up : null;
+  return { name, company: t('company', 120), phone: t('phone', 40), email: t('email', 120), address: t('address', 300), status: b.status || 'lead', source: t('source', 60), note: t('note', 1000), follow_up, follow_up_note: follow_up ? t('follow_up_note', 200) : '', tags: normTags(b.tags), assignee };
 }
+// فهرست کامل مشتریان با آمار (برای فیلتر/مرتب‌سازی/بخش‌بندی در سرور)
+function customersWithStats() {
+  const fin = customerFinance();
+  return db.prepare(`SELECT c.*, u.name AS assignee_name,
+      (SELECT MAX(created_at) FROM customer_notes n WHERE n.customer_id=c.id) AS last_contact,
+      (SELECT COUNT(*) FROM customer_notes n WHERE n.customer_id=c.id) AS notes_count,
+      (SELECT MAX(date) FROM invoices i WHERE i.customer_id=c.id AND i.deleted_at IS NULL) AS last_invoice_date
+    FROM customers c LEFT JOIN users u ON u.id=c.assignee WHERE c.deleted_at IS NULL`).all()
+    .map((r) => ({ ...r, ...(fin.get(r.id) || { count: 0, invoiced: 0, paid: 0, due: 0 }) }));
+}
+const addDays = (iso, n) => new Date(Date.parse(iso + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
 
 function invoiceFull(id) {
   const inv = db.prepare('SELECT * FROM invoices WHERE id=?').get(id);
@@ -305,6 +360,23 @@ const ACC_BAL = `SELECT a.*, a.opening
   + COALESCE((SELECT SUM(CASE WHEN t.type='income' THEN t.amount ELSE -t.amount END) FROM transactions t WHERE t.account_id=a.id AND t.deleted_at IS NULL),0)
   + COALESCE((SELECT SUM(amount) FROM transfers WHERE to_account=a.id),0) - COALESCE((SELECT SUM(amount) FROM transfers WHERE from_account=a.id),0) AS balance FROM accounts a`;
 
+// کنترل دسترسی مرکزی: هر مسیر به یک «بخش» و «سطح» نیاز دارد (مسیرهای مدیریتی داخل خود مسیر با can.admin بررسی می‌شوند)
+function guardRoute(u, p, m, q) {
+  const w = m !== 'GET' && m !== 'HEAD', lv = w ? 'edit' : 'view';
+  if (/^\/api\/(transactions|summary|export\.csv|report)(\/|$)/.test(p)) return need2(u, 'finance', lv);
+  if (p === '/api/import') return need2(u, 'finance', 'edit');
+  if (p === '/api/accounts' && !w) return need2(u, 'finance', 'view');
+  if (p === '/api/transfers') return w && m === 'POST' ? need2(u, 'finance', 'edit') : need2(u, 'finance', 'view');
+  if (p === '/api/categories' && m === 'POST') return need2(u, 'finance', 'edit');
+  if (/^\/api\/invoices(\/|$)/.test(p)) { need2(u, 'invoices', lv); if (/\/pay$/.test(p)) need2(u, 'finance', 'edit'); return; }
+  if (/^\/api\/dues(\/|$)/.test(p)) { need2(u, 'dues', lv); if (/\/settle$/.test(p)) need2(u, 'finance', 'edit'); return; }
+  if (p === '/api/customers/lookup') { if (lvl(u, 'crm') >= 1 || lvl(u, 'invoices') >= 2 || lvl(u, 'dues') >= 2) return; throw new HttpError(403, 'دسترسی به این بخش برای شما مجاز نیست'); }
+  if (/^\/api\/(customers|crm|notes)(\/|$)/.test(p)) return need2(u, 'crm', lv);
+}
+// کاربری که فاکتور/چک را نمی‌بیند، اعداد مالی مشتری را هم نمی‌بیند
+const FIN_FIELDS = ['invoiced', 'paid', 'due', 'count', 'last_invoice_date'];
+const redactCustomer = (u, r) => { if (lvl(u, 'invoices') >= 1) return r; const o = { ...r }; for (const k of FIN_FIELDS) delete o[k]; return o; };
+
 // ---------- مسیرها ----------
 async function api(req, res, url) {
   const m = req.method, p = url.pathname, q = Object.fromEntries(url.searchParams);
@@ -359,6 +431,7 @@ async function api(req, res, url) {
   const gateOk = p === '/api/me' || p === '/api/password' || p.startsWith('/api/2fa');
   if ((user.must_change || user.need_2fa_setup) && !gateOk) throw new HttpError(403, user.must_change ? 'ابتدا رمز عبور خود را تغییر دهید' : 'ابتدا ورود دومرحله‌ای را فعال کنید');
 
+  guardRoute(user, p, m, q);
   if (p === '/api/me') return send(res, 200, publicUser(user));
 
   if (p === '/api/password' && m === 'POST') {
@@ -466,7 +539,8 @@ async function api(req, res, url) {
     const t = db.prepare(`SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount END),0) inc, COALESCE(SUM(CASE WHEN type='expense' THEN amount END),0) exp, COUNT(*) n FROM transactions t ${where}`).get(...params);
     const byCat = db.prepare(`SELECT t.type, COALESCE(c.name,'بدون دسته') name, SUM(t.amount) total FROM transactions t LEFT JOIN categories c ON c.id=t.category_id ${where} GROUP BY t.type, c.id ORDER BY total DESC`).all(...params);
     const byDay = db.prepare(`SELECT t.date, SUM(CASE WHEN t.type='income' THEN t.amount ELSE 0 END) inc, SUM(CASE WHEN t.type='expense' THEN t.amount ELSE 0 END) exp FROM transactions t ${where} GROUP BY t.date ORDER BY t.date`).all(...params);
-    return send(res, 200, { income: t.inc, expense: t.exp, balance: t.inc - t.exp, count: t.n, byCat, byDay });
+    const receivable = lvl(user, 'invoices') >= 1 ? db.prepare("SELECT id FROM invoices WHERE deleted_at IS NULL AND status='unpaid'").all().reduce((acc, r) => acc + invoiceFull(r.id).total, 0) : null;
+    return send(res, 200, { income: t.inc, expense: t.exp, balance: t.inc - t.exp, count: t.n, byCat, byDay, receivable });
   }
 
   if (p === '/api/export.csv' && m === 'GET') {
@@ -481,43 +555,84 @@ async function api(req, res, url) {
 
 
   // ---------- مشتریان (CRM) ----------
+  if (p === '/api/customers/lookup' && m === 'GET') return send(res, 200, db.prepare("SELECT id,name,company,phone,address,status FROM customers WHERE deleted_at IS NULL ORDER BY name LIMIT 3000").all());
+  if (p === '/api/team' && m === 'GET') return send(res, 200, db.prepare('SELECT id,name,role FROM users WHERE active=1 ORDER BY id').all());
   if (p === '/api/customers') {
     if (m === 'GET') {
-      const w = ['c.deleted_at IS NULL'], pr = [];
-      if (STATUSES.includes(q.status)) { w.push('c.status=?'); pr.push(q.status); }
-      if (q.q) { w.push('(c.name LIKE ? OR c.company LIKE ? OR c.phone LIKE ? OR c.email LIKE ?)'); const x = `%${q.q}%`; pr.push(x, x, x, x); }
-      const rows = db.prepare(`SELECT c.*, (SELECT MAX(created_at) FROM customer_notes n WHERE n.customer_id=c.id) last_contact,
-        (SELECT COUNT(*) FROM customer_notes n WHERE n.customer_id=c.id) notes_count FROM customers c WHERE ${w.join(' AND ')} ORDER BY c.updated_at DESC, c.id DESC LIMIT 1000`).all(...pr);
-      const fin = customerFinance(), counts = Object.fromEntries(db.prepare('SELECT status, COUNT(*) n FROM customers WHERE deleted_at IS NULL GROUP BY status').all().map((r) => [r.status, r.n]));
-      return send(res, 200, { rows: rows.map((r) => ({ ...r, ...(fin.get(r.id) || { count: 0, invoiced: 0, paid: 0, due: 0 }) })), counts });
+      const today = isDate(q.today) ? q.today : new Date().toISOString().slice(0, 10), all = customersWithStats();
+      const isStale = (r) => r.status !== 'inactive' && (r.last_contact || r.created_at).slice(0, 10) < addDays(today, -30);
+      const seg = { due: (r) => r.due > 0, followup: (r) => r.follow_up && r.follow_up <= today && r.status !== 'inactive', stale: isStale, new: (r) => r.created_at.slice(0, 10) >= addDays(today, -30), mine: (r) => r.assignee === user.id };
+      const facets = { segments: Object.fromEntries(Object.entries(seg).map(([k, f]) => [k, all.filter(f).length])), tags: {}, counts: {} };
+      for (const r of all) { facets.counts[r.status] = (facets.counts[r.status] || 0) + 1; for (const t of r.tags ? r.tags.split(',') : []) facets.tags[t] = (facets.tags[t] || 0) + 1; }
+      let rows = all;
+      if (STATUSES.includes(q.status)) rows = rows.filter((r) => r.status === q.status);
+      if (q.tag) rows = rows.filter((r) => r.tags.split(',').includes(q.tag));
+      if (seg[q.segment] && !(q.segment === 'due' && lvl(user, 'invoices') < 1)) rows = rows.filter(seg[q.segment]);
+      if (+q.assignee) rows = rows.filter((r) => r.assignee === +q.assignee);
+      if (q.q) { const x = String(q.q).toLowerCase(), pk = String(q.q).replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/\D/g, '').replace(/^0+/, ''); rows = rows.filter((r) => [r.name, r.company, r.email, r.address, r.tags, r.phone].some((v) => String(v || '').toLowerCase().includes(x)) || (pk.length >= 4 && phoneKey(r.phone).includes(pk))); }
+      const sortKey = (lvl(user, 'invoices') < 1 && (q.sort === 'due' || q.sort === 'revenue')) ? 'recent' : q.sort;
+      const cmp = { recent: (a, b) => (b.updated_at > a.updated_at ? 1 : -1), name: (a, b) => a.name.localeCompare(b.name, 'fa'), due: (a, b) => b.due - a.due, revenue: (a, b) => b.paid - a.paid, followup: (a, b) => (a.follow_up || '9999').localeCompare(b.follow_up || '9999'), contact: (a, b) => (a.last_contact || a.created_at).localeCompare(b.last_contact || b.created_at) }[sortKey] || ((a, b) => (b.updated_at > a.updated_at ? 1 : -1));
+      rows = rows.sort(cmp).slice(0, 1000);
+      if (lvl(user, 'invoices') < 1) { delete facets.segments.due; rows = rows.map((r) => redactCustomer(user, r)); }
+      return send(res, 200, { rows, counts: facets.counts, facets });
     }
     if (m === 'POST') {
-      need(can.write(user)); const v = cleanCustomer(await readBody(req));
-      const r = db.prepare('INSERT INTO customers(name,company,phone,email,address,status,source,note,follow_up,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)').run(v.name, v.company, v.phone, v.email, v.address, v.status, v.source, v.note, v.follow_up, user.id);
+      need(can.write(user)); const b = await readBody(req), v = cleanCustomer(b);
+      if (!b.force && phoneKey(v.phone).length >= 7) {
+        const dup = db.prepare('SELECT id,name,phone FROM customers WHERE deleted_at IS NULL').all().find((r) => phoneKey(r.phone) === phoneKey(v.phone));
+        if (dup) return send(res, 409, { error: `مشتری با این شماره قبلاً ثبت شده: ${dup.name}`, duplicate_id: dup.id });
+      }
+      const r = db.prepare('INSERT INTO customers(name,company,phone,email,address,status,source,note,follow_up,follow_up_note,tags,assignee,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)').run(v.name, v.company, v.phone, v.email, v.address, v.status, v.source, v.note, v.follow_up, v.follow_up_note, v.tags, v.assignee, user.id);
       audit(user, 'customer.create', { id: Number(r.lastInsertRowid), name: v.name });
       return send(res, 201, { id: Number(r.lastInsertRowid), ...v });
     }
   }
+  if (p === '/api/customers/import' && m === 'POST') {
+    need(can.write(user)); const b = await readBody(req, 2e6);
+    if (!Array.isArray(b.rows) || !b.rows.length) throw new HttpError(400, 'ردیفی برای ورود وجود ندارد');
+    if (b.rows.length > 3000) throw new HttpError(400, 'حداکثر ۳۰۰۰ مشتری در هر بار');
+    const existing = db.prepare('SELECT name,phone FROM customers WHERE deleted_at IS NULL').all(), seenPhone = new Set(existing.map((r) => phoneKey(r.phone)).filter((k) => k.length >= 7)), seenName = new Set(existing.map((r) => r.name.trim()));
+    const ins = db.prepare('INSERT INTO customers(name,company,phone,email,address,status,source,note,tags,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)');
+    let imported = 0, skipped = 0, bad = 0; db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const r of b.rows) {
+        let v; try { v = cleanCustomer({ ...r, status: STATUSES.includes(r.status) ? r.status : (b.status || 'lead'), follow_up: null, assignee: null }); } catch { bad++; continue; }
+        const pk = phoneKey(v.phone); if ((pk.length >= 7 && seenPhone.has(pk)) || (pk.length < 7 && seenName.has(v.name))) { skipped++; continue; }
+        ins.run(v.name, v.company, v.phone, v.email, v.address, v.status, v.source, v.note, v.tags, user.id); imported++; if (pk.length >= 7) seenPhone.add(pk); seenName.add(v.name);
+      }
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+    audit(user, 'customer.import', { imported, skipped, bad }); return send(res, 200, { imported, skipped, bad });
+  }
   if (p === '/api/crm/overview' && m === 'GET') {
-    const today = isDate(q.today) ? q.today : new Date().toISOString().slice(0, 10), fin = customerFinance();
-    const counts = Object.fromEntries(db.prepare('SELECT status, COUNT(*) n FROM customers WHERE deleted_at IS NULL GROUP BY status').all().map((r) => [r.status, r.n]));
-    const followups = db.prepare("SELECT id,name,company,phone,status,follow_up FROM customers WHERE deleted_at IS NULL AND follow_up IS NOT NULL AND follow_up<=? AND status!='inactive' ORDER BY follow_up LIMIT 8").all(today);
-    const debtors = db.prepare('SELECT id,name,company,phone,status FROM customers WHERE deleted_at IS NULL').all().map((c) => ({ ...c, due: (fin.get(c.id) || {}).due || 0 })).filter((c) => c.due > 0).sort((a, b) => b.due - a.due).slice(0, 6);
-    const totalDue = [...fin.values()].reduce((a, f) => a + f.due, 0);
-    return send(res, 200, { counts, followups, debtors, totalDue });
+    const today = isDate(q.today) ? q.today : new Date().toISOString().slice(0, 10), all = customersWithStats();
+    const counts = {}; for (const r of all) counts[r.status] = (counts[r.status] || 0) + 1;
+    const followups = all.filter((r) => r.follow_up && r.follow_up <= today && r.status !== 'inactive').sort((a, b) => a.follow_up.localeCompare(b.follow_up)).slice(0, 8).map((r) => ({ id: r.id, name: r.name, company: r.company, phone: r.phone, status: r.status, follow_up: r.follow_up, follow_up_note: r.follow_up_note, assignee_name: r.assignee_name }));
+    const debtors = all.filter((r) => r.due > 0).sort((a, b) => b.due - a.due).slice(0, 6).map((r) => ({ id: r.id, name: r.name, company: r.company, phone: r.phone, status: r.status, due: r.due }));
+    const srcs = {}; for (const r of all) { const k = r.source || 'نامشخص'; srcs[k] = (srcs[k] || 0) + 1; }
+    const stats = { total: all.length, new30: all.filter((r) => r.created_at.slice(0, 10) >= addDays(today, -30)).length, outstanding: all.reduce((a, r) => a + r.due, 0), revenue: all.reduce((a, r) => a + r.paid, 0), followupsDue: all.filter((r) => r.follow_up && r.follow_up <= today && r.status !== 'inactive').length, stale: all.filter((r) => r.status !== 'inactive' && (r.last_contact || r.created_at).slice(0, 10) < addDays(today, -30)).length };
+    let totalDue = [...customerFinance().values()].reduce((a, f) => a + f.due, 0);
+    if (lvl(user, 'invoices') < 1) { delete stats.outstanding; delete stats.revenue; debtors.length = 0; totalDue = 0; }
+    return send(res, 200, { counts, followups, debtors, totalDue, stats, sources: Object.entries(srcs).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, n]) => ({ name, n })) });
   }
   if ((mm = p.match(/^\/api\/customers\/(\d+)$/))) {
     const id = +mm[1], c = db.prepare('SELECT * FROM customers WHERE id=? AND deleted_at IS NULL').get(id);
     if (!c) throw new HttpError(404, 'مشتری یافت نشد');
     if (m === 'GET') {
       const notes = db.prepare('SELECT n.*, u.name AS author FROM customer_notes n LEFT JOIN users u ON u.id=n.created_by WHERE n.customer_id=? ORDER BY n.id DESC').all(id);
-      const invoices = db.prepare('SELECT id FROM invoices WHERE customer_id=? AND deleted_at IS NULL ORDER BY number DESC').all(id).map((r) => invoiceFull(r.id));
-      return send(res, 200, { ...c, ...(customerFinance(id).get(id) || { count: 0, invoiced: 0, paid: 0, due: 0 }), notes, invoices });
+      const invoices = db.prepare('SELECT id FROM invoices WHERE customer_id=? AND deleted_at IS NULL ORDER BY number DESC').all(id).map((r) => { const v = invoiceFull(r.id); v.paid_date = v.tx_id ? (db.prepare('SELECT date FROM transactions WHERE id=?').get(v.tx_id) || {}).date || null : null; return v; });
+      const dues = db.prepare('SELECT id,kind,direction,title,number,amount,due_date,status,done_date FROM dues WHERE customer_id=? AND deleted_at IS NULL ORDER BY due_date DESC').all(id);
+      const asg = c.assignee ? (db.prepare('SELECT name FROM users WHERE id=?').get(c.assignee) || {}).name : null;
+      const detail = { ...c, assignee_name: asg, ...(customerFinance(id).get(id) || { count: 0, invoiced: 0, paid: 0, due: 0 }), notes, invoices, dues };
+      if (lvl(user, 'invoices') < 1) { for (const k of FIN_FIELDS) delete detail[k]; delete detail.invoices; }
+      if (lvl(user, 'dues') < 1) delete detail.dues;
+      return send(res, 200, detail);
     }
     if (m === 'PUT') {
       need(can.write(user)); const b = await readBody(req);
       const v = cleanCustomer({ ...c, ...b, follow_up: 'follow_up' in b ? b.follow_up : c.follow_up });
-      db.prepare('UPDATE customers SET name=?,company=?,phone=?,email=?,address=?,status=?,source=?,note=?,follow_up=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(v.name, v.company, v.phone, v.email, v.address, v.status, v.source, v.note, v.follow_up, id);
+      db.prepare('UPDATE customers SET name=?,company=?,phone=?,email=?,address=?,status=?,source=?,note=?,follow_up=?,follow_up_note=?,tags=?,assignee=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(v.name, v.company, v.phone, v.email, v.address, v.status, v.source, v.note, v.follow_up, v.follow_up_note, v.tags, v.assignee, id);
+      if (v.status !== c.status) db.prepare('INSERT INTO customer_notes(customer_id,kind,text,created_by) VALUES(?,?,?,?)').run(id, 'note', `⚙️ وضعیت از «${STATUS_FA[c.status]}» به «${STATUS_FA[v.status]}» تغییر کرد`, user.id);
       audit(user, 'customer.update', { id, name: v.name, status: v.status });
       return send(res, 200, { ok: true });
     }
@@ -534,7 +649,7 @@ async function api(req, res, url) {
     const text = String(b.text || '').trim().slice(0, 1000), kind = ['note', 'call', 'meeting', 'message'].includes(b.kind) ? b.kind : 'note';
     if (!text) throw new HttpError(400, 'متن یادداشت خالی است');
     const r = db.prepare('INSERT INTO customer_notes(customer_id,kind,text,created_by) VALUES(?,?,?,?)').run(id, kind, text, user.id);
-    if (isDate(b.follow_up)) db.prepare('UPDATE customers SET follow_up=? WHERE id=?').run(b.follow_up, id);
+    if (isDate(b.follow_up)) db.prepare('UPDATE customers SET follow_up=?, follow_up_note=? WHERE id=?').run(b.follow_up, String(b.follow_up_note || '').trim().slice(0, 200), id);
     db.prepare('UPDATE customers SET updated_at=CURRENT_TIMESTAMP WHERE id=?').run(id);
     return send(res, 201, { id: Number(r.lastInsertRowid) });
   }
@@ -702,6 +817,7 @@ async function api(req, res, url) {
     if (!entity || !Number.isInteger(eid) || eid <= 0) throw new HttpError(400, 'پارامتر نامعتبر');
     const exists = db.prepare(`SELECT 1 FROM ${entity === 'due' ? 'dues' : 'transactions'} WHERE id=? AND deleted_at IS NULL`).get(eid);
     if (!exists) throw new HttpError(404, 'مورد یافت نشد');
+    need2(user, entity === 'due' ? 'dues' : 'finance', m === 'GET' ? 'view' : 'edit');
     if (m === 'GET') return send(res, 200, db.prepare('SELECT a.id,a.name,a.mime,a.size,a.created_at,u.name AS author FROM attachments a LEFT JOIN users u ON u.id=a.created_by WHERE a.entity=? AND a.entity_id=? ORDER BY a.id').all(entity, eid));
     if (m === 'POST') {
       need(can.write(user));
@@ -717,6 +833,7 @@ async function api(req, res, url) {
   }
   if ((mm = p.match(/^\/api\/attachments\/(\d+)$/))) {
     const a = db.prepare('SELECT * FROM attachments WHERE id=?').get(+mm[1]); if (!a) throw new HttpError(404, 'یافت نشد');
+    need2(user, a.entity === 'due' ? 'dues' : 'finance', m === 'GET' ? 'view' : 'edit');
     if (m === 'GET') {
       const isImg = a.mime.startsWith('image/'), fn = encodeURIComponent(a.name);
       return send(res, 200, Buffer.from(a.data), { 'Content-Type': a.mime, 'Content-Disposition': `${isImg ? 'inline' : 'attachment'}; filename*=UTF-8''${fn}`, 'Content-Security-Policy': "default-src 'none'; sandbox", 'Cache-Control': 'private, max-age=300' });
@@ -866,14 +983,14 @@ async function api(req, res, url) {
 
   if (p === '/api/users') {
     need(can.admin(user));
-    if (m === 'GET') return send(res, 200, db.prepare('SELECT id,username,name,role,active,totp_enabled,must_change FROM users ORDER BY id').all());
+    if (m === 'GET') return send(res, 200, db.prepare('SELECT id,username,name,role,active,totp_enabled,must_change,perms FROM users ORDER BY id').all().map((r) => ({ ...r, perms_custom: !!r.perms && r.role !== 'owner', perms: effPerms(r.role, r.perms) })));
     if (m === 'POST') {
       const b = await readBody(req);
       const username = String(b.username || '').trim().toLowerCase();
       if (!/^[a-z0-9_.]{3,30}$/.test(username)) throw new HttpError(400, 'نام کاربری: ۳ تا ۳۰ حرف انگلیسی/عدد');
-      if (!['owner', 'accountant', 'partner'].includes(b.role)) throw new HttpError(400, 'نقش نامعتبر');
+      if (!['owner', 'accountant', 'sales', 'partner'].includes(b.role)) throw new HttpError(400, 'نقش نامعتبر');
       const bad = S.checkPassword(b.password, username); if (bad) throw new HttpError(400, bad);
-      try { db.prepare('INSERT INTO users(username,name,role,pass,must_change) VALUES(?,?,?,?,1)').run(username, String(b.name || username).slice(0, 60), b.role, hash(String(b.password))); }
+      try { db.prepare('INSERT INTO users(username,name,role,pass,must_change,perms) VALUES(?,?,?,?,1,?)').run(username, String(b.name || username).slice(0, 60), b.role, hash(String(b.password)), b.role !== 'owner' && b.perms ? cleanPerms(b.perms) : null); }
       catch { throw new HttpError(409, 'این نام کاربری وجود دارد'); }
       audit(user, 'user.create', { username, role: b.role });
       return send(res, 201, { ok: true });
@@ -882,7 +999,8 @@ async function api(req, res, url) {
   if ((mm = p.match(/^\/api\/users\/(\d+)$/)) && m === 'PUT') {
     need(can.admin(user)); const id = +mm[1]; const b = await readBody(req);
     if (id === user.id && (b.active === false || (b.role && b.role !== 'owner'))) throw new HttpError(400, 'نمی‌توانید دسترسی خودتان را کم کنید');
-    if (b.role && ['owner', 'accountant', 'partner'].includes(b.role)) db.prepare('UPDATE users SET role=? WHERE id=?').run(b.role, id);
+    if (b.role && ['owner', 'accountant', 'sales', 'partner'].includes(b.role)) db.prepare('UPDATE users SET role=?' + (b.role !== (db.prepare('SELECT role FROM users WHERE id=?').get(id) || {}).role && !('perms' in b) ? ', perms=NULL' : '') + ' WHERE id=?').run(b.role, id);
+    if ('perms' in b) { const t = db.prepare('SELECT role FROM users WHERE id=?').get(id); if (t && t.role !== 'owner') db.prepare('UPDATE users SET perms=? WHERE id=?').run(cleanPerms(b.perms), id); }
     if (typeof b.active === 'boolean') { db.prepare('UPDATE users SET active=? WHERE id=?').run(b.active ? 1 : 0, id); if (!b.active) db.prepare('DELETE FROM sessions WHERE user_id=?').run(id); }
     if (b.password) {
       const t = db.prepare('SELECT username FROM users WHERE id=?').get(id); if (!t) throw new HttpError(404, 'کاربر یافت نشد');
@@ -901,6 +1019,7 @@ async function api(req, res, url) {
 }
 
 const PUB = path.join(__dirname, 'public');
+const BOT_RE = /(bot\b|bot[\/ _-]|robot|crawl|spider|slurp|scrap|facebookexternalhit|embedly|preview|mediapartners|ia_archiver|archive\.org|semrush|ahrefs|mj12|dotbot|petalbot|bytespider|ccbot|gptbot|perplexity|diffbot|omgili|seznam|yandex|baidu|sogou|naver|apis-google|inspectiontool|googleother|feedfetcher|lighthouse|pagespeed|phantomjs|whatsapp|telegram|discord|twitter|linkedin|skypeuri|viber|pinterest|snapchat|vkshare|duckduck|googleweblight|nmap|zgrab|masscan|nikto)/i;
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'";
 function secHeaders(req, res) {
   const h = {
@@ -916,8 +1035,11 @@ const server = http.createServer(async (req, res) => {
   secHeaders(req, res);
   let url; try { url = new URL(req.url, 'http://x'); } catch { return send(res, 400, { error: 'درخواست نامعتبر' }); }
   try {
+    // لایه ۱: robots.txt همه را از خزیدن منع می‌کند (ربات‌های مؤدب اصلاً نمی‌آیند)
     if (url.pathname === '/robots.txt') return send(res, 200, 'User-agent: *\nDisallow: /\n', { 'Content-Type': 'text/plain; charset=utf-8' });
     if (url.pathname === '/healthz') return send(res, 200, 'ok', { 'Content-Type': 'text/plain' });
+    // لایه ۲: هر ربات/خزنده/پیش‌نمایش‌گیر (گوگل، بینگ، هوش مصنوعی، تلگرام، واتساپ…) فقط ۴۰۴ می‌بیند، انگار این آدرس وجود ندارد
+    if (BOT_RE.test(String(req.headers['user-agent'] || ''))) return send(res, 404, 'Not Found', { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
     if (url.pathname.startsWith('/api/')) { res.setHeader('Cache-Control', 'no-store'); return await api(req, res, url); }
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { error: 'روش مجاز نیست' });
     let f = path.normalize(path.join(PUB, url.pathname === '/' ? 'index.html' : url.pathname));
