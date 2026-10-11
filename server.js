@@ -82,6 +82,8 @@ if (!db.prepare('PRAGMA table_info(transactions)').all().some((c) => c.name === 
 if (!db.prepare('PRAGMA table_info(invoices)').all().some((c) => c.name === 'customer_id'))
   db.exec('ALTER TABLE invoices ADD COLUMN customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL');
 
+for (const [col, def] of [['tags', "TEXT NOT NULL DEFAULT ''"], ['follow_up_note', "TEXT NOT NULL DEFAULT ''"], ['assignee', 'INTEGER REFERENCES users(id) ON DELETE SET NULL']])
+  if (!db.prepare('PRAGMA table_info(customers)').all().some((c) => c.name === col)) db.exec(`ALTER TABLE customers ADD COLUMN ${col} ${def}`);
 for (const t of ['transactions', 'invoices', 'customers']) {
   const cols = db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
   if (!cols.includes('deleted_at')) db.exec(`ALTER TABLE ${t} ADD COLUMN deleted_at TEXT`);
@@ -230,13 +232,33 @@ function customerFinance(onlyId) {
   }
   return out;
 }
+const STATUS_FA = { lead: 'سرنخ', active: 'فعال', vip: 'ویژه', inactive: 'غیرفعال' };
+const normTags = (v) => {
+  const arr = Array.isArray(v) ? v : String(v || '').split(/[,،;\n]/);
+  return [...new Set(arr.map((x) => String(x).trim().replace(/\s+/g, ' ').slice(0, 24)).filter(Boolean))].slice(0, 10).join(',');
+};
+const phoneKey = (p) => String(p || '').replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/\D/g, '').slice(-10);
 function cleanCustomer(b) {
   const name = String(b.name || '').trim().slice(0, 120);
   if (!name) throw new HttpError(400, 'نام مشتری را وارد کنید');
   if (b.status && !STATUSES.includes(b.status)) throw new HttpError(400, 'وضعیت نامعتبر است');
   const t = (k, n) => String(b[k] || '').trim().slice(0, n);
-  return { name, company: t('company', 120), phone: t('phone', 40), email: t('email', 120), address: t('address', 300), status: b.status || 'lead', source: t('source', 60), note: t('note', 1000), follow_up: isDate(b.follow_up) ? b.follow_up : null };
+  let assignee = null;
+  if (b.assignee) { if (!db.prepare('SELECT 1 FROM users WHERE id=? AND active=1').get(+b.assignee)) throw new HttpError(400, 'مسئول پیگیری نامعتبر است'); assignee = +b.assignee; }
+  const follow_up = isDate(b.follow_up) ? b.follow_up : null;
+  return { name, company: t('company', 120), phone: t('phone', 40), email: t('email', 120), address: t('address', 300), status: b.status || 'lead', source: t('source', 60), note: t('note', 1000), follow_up, follow_up_note: follow_up ? t('follow_up_note', 200) : '', tags: normTags(b.tags), assignee };
 }
+// فهرست کامل مشتریان با آمار (برای فیلتر/مرتب‌سازی/بخش‌بندی در سرور)
+function customersWithStats() {
+  const fin = customerFinance();
+  return db.prepare(`SELECT c.*, u.name AS assignee_name,
+      (SELECT MAX(created_at) FROM customer_notes n WHERE n.customer_id=c.id) AS last_contact,
+      (SELECT COUNT(*) FROM customer_notes n WHERE n.customer_id=c.id) AS notes_count,
+      (SELECT MAX(date) FROM invoices i WHERE i.customer_id=c.id AND i.deleted_at IS NULL) AS last_invoice_date
+    FROM customers c LEFT JOIN users u ON u.id=c.assignee WHERE c.deleted_at IS NULL`).all()
+    .map((r) => ({ ...r, ...(fin.get(r.id) || { count: 0, invoiced: 0, paid: 0, due: 0 }) }));
+}
+const addDays = (iso, n) => new Date(Date.parse(iso + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
 
 function invoiceFull(id) {
   const inv = db.prepare('SELECT * FROM invoices WHERE id=?').get(id);
@@ -481,43 +503,77 @@ async function api(req, res, url) {
 
 
   // ---------- مشتریان (CRM) ----------
+  if (p === '/api/team' && m === 'GET') return send(res, 200, db.prepare('SELECT id,name,role FROM users WHERE active=1 ORDER BY id').all());
   if (p === '/api/customers') {
     if (m === 'GET') {
-      const w = ['c.deleted_at IS NULL'], pr = [];
-      if (STATUSES.includes(q.status)) { w.push('c.status=?'); pr.push(q.status); }
-      if (q.q) { w.push('(c.name LIKE ? OR c.company LIKE ? OR c.phone LIKE ? OR c.email LIKE ?)'); const x = `%${q.q}%`; pr.push(x, x, x, x); }
-      const rows = db.prepare(`SELECT c.*, (SELECT MAX(created_at) FROM customer_notes n WHERE n.customer_id=c.id) last_contact,
-        (SELECT COUNT(*) FROM customer_notes n WHERE n.customer_id=c.id) notes_count FROM customers c WHERE ${w.join(' AND ')} ORDER BY c.updated_at DESC, c.id DESC LIMIT 1000`).all(...pr);
-      const fin = customerFinance(), counts = Object.fromEntries(db.prepare('SELECT status, COUNT(*) n FROM customers WHERE deleted_at IS NULL GROUP BY status').all().map((r) => [r.status, r.n]));
-      return send(res, 200, { rows: rows.map((r) => ({ ...r, ...(fin.get(r.id) || { count: 0, invoiced: 0, paid: 0, due: 0 }) })), counts });
+      const today = isDate(q.today) ? q.today : new Date().toISOString().slice(0, 10), all = customersWithStats();
+      const isStale = (r) => r.status !== 'inactive' && (r.last_contact || r.created_at).slice(0, 10) < addDays(today, -30);
+      const seg = { due: (r) => r.due > 0, followup: (r) => r.follow_up && r.follow_up <= today && r.status !== 'inactive', stale: isStale, new: (r) => r.created_at.slice(0, 10) >= addDays(today, -30), mine: (r) => r.assignee === user.id };
+      const facets = { segments: Object.fromEntries(Object.entries(seg).map(([k, f]) => [k, all.filter(f).length])), tags: {}, counts: {} };
+      for (const r of all) { facets.counts[r.status] = (facets.counts[r.status] || 0) + 1; for (const t of r.tags ? r.tags.split(',') : []) facets.tags[t] = (facets.tags[t] || 0) + 1; }
+      let rows = all;
+      if (STATUSES.includes(q.status)) rows = rows.filter((r) => r.status === q.status);
+      if (q.tag) rows = rows.filter((r) => r.tags.split(',').includes(q.tag));
+      if (seg[q.segment]) rows = rows.filter(seg[q.segment]);
+      if (+q.assignee) rows = rows.filter((r) => r.assignee === +q.assignee);
+      if (q.q) { const x = String(q.q).toLowerCase(), pk = String(q.q).replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/\D/g, '').replace(/^0+/, ''); rows = rows.filter((r) => [r.name, r.company, r.email, r.address, r.tags, r.phone].some((v) => String(v || '').toLowerCase().includes(x)) || (pk.length >= 4 && phoneKey(r.phone).includes(pk))); }
+      const cmp = { recent: (a, b) => (b.updated_at > a.updated_at ? 1 : -1), name: (a, b) => a.name.localeCompare(b.name, 'fa'), due: (a, b) => b.due - a.due, revenue: (a, b) => b.paid - a.paid, followup: (a, b) => (a.follow_up || '9999').localeCompare(b.follow_up || '9999'), contact: (a, b) => (a.last_contact || a.created_at).localeCompare(b.last_contact || b.created_at) }[q.sort] || ((a, b) => (b.updated_at > a.updated_at ? 1 : -1));
+      rows = rows.sort(cmp).slice(0, 1000);
+      return send(res, 200, { rows, counts: facets.counts, facets });
     }
     if (m === 'POST') {
-      need(can.write(user)); const v = cleanCustomer(await readBody(req));
-      const r = db.prepare('INSERT INTO customers(name,company,phone,email,address,status,source,note,follow_up,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)').run(v.name, v.company, v.phone, v.email, v.address, v.status, v.source, v.note, v.follow_up, user.id);
+      need(can.write(user)); const b = await readBody(req), v = cleanCustomer(b);
+      if (!b.force && phoneKey(v.phone).length >= 7) {
+        const dup = db.prepare('SELECT id,name,phone FROM customers WHERE deleted_at IS NULL').all().find((r) => phoneKey(r.phone) === phoneKey(v.phone));
+        if (dup) return send(res, 409, { error: `مشتری با این شماره قبلاً ثبت شده: ${dup.name}`, duplicate_id: dup.id });
+      }
+      const r = db.prepare('INSERT INTO customers(name,company,phone,email,address,status,source,note,follow_up,follow_up_note,tags,assignee,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)').run(v.name, v.company, v.phone, v.email, v.address, v.status, v.source, v.note, v.follow_up, v.follow_up_note, v.tags, v.assignee, user.id);
       audit(user, 'customer.create', { id: Number(r.lastInsertRowid), name: v.name });
       return send(res, 201, { id: Number(r.lastInsertRowid), ...v });
     }
   }
+  if (p === '/api/customers/import' && m === 'POST') {
+    need(can.write(user)); const b = await readBody(req, 2e6);
+    if (!Array.isArray(b.rows) || !b.rows.length) throw new HttpError(400, 'ردیفی برای ورود وجود ندارد');
+    if (b.rows.length > 3000) throw new HttpError(400, 'حداکثر ۳۰۰۰ مشتری در هر بار');
+    const existing = db.prepare('SELECT name,phone FROM customers WHERE deleted_at IS NULL').all(), seenPhone = new Set(existing.map((r) => phoneKey(r.phone)).filter((k) => k.length >= 7)), seenName = new Set(existing.map((r) => r.name.trim()));
+    const ins = db.prepare('INSERT INTO customers(name,company,phone,email,address,status,source,note,tags,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)');
+    let imported = 0, skipped = 0, bad = 0; db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const r of b.rows) {
+        let v; try { v = cleanCustomer({ ...r, status: STATUSES.includes(r.status) ? r.status : (b.status || 'lead'), follow_up: null, assignee: null }); } catch { bad++; continue; }
+        const pk = phoneKey(v.phone); if ((pk.length >= 7 && seenPhone.has(pk)) || (pk.length < 7 && seenName.has(v.name))) { skipped++; continue; }
+        ins.run(v.name, v.company, v.phone, v.email, v.address, v.status, v.source, v.note, v.tags, user.id); imported++; if (pk.length >= 7) seenPhone.add(pk); seenName.add(v.name);
+      }
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+    audit(user, 'customer.import', { imported, skipped, bad }); return send(res, 200, { imported, skipped, bad });
+  }
   if (p === '/api/crm/overview' && m === 'GET') {
-    const today = isDate(q.today) ? q.today : new Date().toISOString().slice(0, 10), fin = customerFinance();
-    const counts = Object.fromEntries(db.prepare('SELECT status, COUNT(*) n FROM customers WHERE deleted_at IS NULL GROUP BY status').all().map((r) => [r.status, r.n]));
-    const followups = db.prepare("SELECT id,name,company,phone,status,follow_up FROM customers WHERE deleted_at IS NULL AND follow_up IS NOT NULL AND follow_up<=? AND status!='inactive' ORDER BY follow_up LIMIT 8").all(today);
-    const debtors = db.prepare('SELECT id,name,company,phone,status FROM customers WHERE deleted_at IS NULL').all().map((c) => ({ ...c, due: (fin.get(c.id) || {}).due || 0 })).filter((c) => c.due > 0).sort((a, b) => b.due - a.due).slice(0, 6);
-    const totalDue = [...fin.values()].reduce((a, f) => a + f.due, 0);
-    return send(res, 200, { counts, followups, debtors, totalDue });
+    const today = isDate(q.today) ? q.today : new Date().toISOString().slice(0, 10), all = customersWithStats();
+    const counts = {}; for (const r of all) counts[r.status] = (counts[r.status] || 0) + 1;
+    const followups = all.filter((r) => r.follow_up && r.follow_up <= today && r.status !== 'inactive').sort((a, b) => a.follow_up.localeCompare(b.follow_up)).slice(0, 8).map((r) => ({ id: r.id, name: r.name, company: r.company, phone: r.phone, status: r.status, follow_up: r.follow_up, follow_up_note: r.follow_up_note, assignee_name: r.assignee_name }));
+    const debtors = all.filter((r) => r.due > 0).sort((a, b) => b.due - a.due).slice(0, 6).map((r) => ({ id: r.id, name: r.name, company: r.company, phone: r.phone, status: r.status, due: r.due }));
+    const srcs = {}; for (const r of all) { const k = r.source || 'نامشخص'; srcs[k] = (srcs[k] || 0) + 1; }
+    const stats = { total: all.length, new30: all.filter((r) => r.created_at.slice(0, 10) >= addDays(today, -30)).length, outstanding: all.reduce((a, r) => a + r.due, 0), revenue: all.reduce((a, r) => a + r.paid, 0), followupsDue: all.filter((r) => r.follow_up && r.follow_up <= today && r.status !== 'inactive').length, stale: all.filter((r) => r.status !== 'inactive' && (r.last_contact || r.created_at).slice(0, 10) < addDays(today, -30)).length };
+    const totalDue = [...customerFinance().values()].reduce((a, f) => a + f.due, 0);
+    return send(res, 200, { counts, followups, debtors, totalDue, stats, sources: Object.entries(srcs).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, n]) => ({ name, n })) });
   }
   if ((mm = p.match(/^\/api\/customers\/(\d+)$/))) {
     const id = +mm[1], c = db.prepare('SELECT * FROM customers WHERE id=? AND deleted_at IS NULL').get(id);
     if (!c) throw new HttpError(404, 'مشتری یافت نشد');
     if (m === 'GET') {
       const notes = db.prepare('SELECT n.*, u.name AS author FROM customer_notes n LEFT JOIN users u ON u.id=n.created_by WHERE n.customer_id=? ORDER BY n.id DESC').all(id);
-      const invoices = db.prepare('SELECT id FROM invoices WHERE customer_id=? AND deleted_at IS NULL ORDER BY number DESC').all(id).map((r) => invoiceFull(r.id));
-      return send(res, 200, { ...c, ...(customerFinance(id).get(id) || { count: 0, invoiced: 0, paid: 0, due: 0 }), notes, invoices });
+      const invoices = db.prepare('SELECT id FROM invoices WHERE customer_id=? AND deleted_at IS NULL ORDER BY number DESC').all(id).map((r) => { const v = invoiceFull(r.id); v.paid_date = v.tx_id ? (db.prepare('SELECT date FROM transactions WHERE id=?').get(v.tx_id) || {}).date || null : null; return v; });
+      const dues = db.prepare('SELECT id,kind,direction,title,number,amount,due_date,status,done_date FROM dues WHERE customer_id=? AND deleted_at IS NULL ORDER BY due_date DESC').all(id);
+      const asg = c.assignee ? (db.prepare('SELECT name FROM users WHERE id=?').get(c.assignee) || {}).name : null;
+      return send(res, 200, { ...c, assignee_name: asg, ...(customerFinance(id).get(id) || { count: 0, invoiced: 0, paid: 0, due: 0 }), notes, invoices, dues });
     }
     if (m === 'PUT') {
       need(can.write(user)); const b = await readBody(req);
       const v = cleanCustomer({ ...c, ...b, follow_up: 'follow_up' in b ? b.follow_up : c.follow_up });
-      db.prepare('UPDATE customers SET name=?,company=?,phone=?,email=?,address=?,status=?,source=?,note=?,follow_up=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(v.name, v.company, v.phone, v.email, v.address, v.status, v.source, v.note, v.follow_up, id);
+      db.prepare('UPDATE customers SET name=?,company=?,phone=?,email=?,address=?,status=?,source=?,note=?,follow_up=?,follow_up_note=?,tags=?,assignee=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(v.name, v.company, v.phone, v.email, v.address, v.status, v.source, v.note, v.follow_up, v.follow_up_note, v.tags, v.assignee, id);
+      if (v.status !== c.status) db.prepare('INSERT INTO customer_notes(customer_id,kind,text,created_by) VALUES(?,?,?,?)').run(id, 'note', `⚙️ وضعیت از «${STATUS_FA[c.status]}» به «${STATUS_FA[v.status]}» تغییر کرد`, user.id);
       audit(user, 'customer.update', { id, name: v.name, status: v.status });
       return send(res, 200, { ok: true });
     }
@@ -534,7 +590,7 @@ async function api(req, res, url) {
     const text = String(b.text || '').trim().slice(0, 1000), kind = ['note', 'call', 'meeting', 'message'].includes(b.kind) ? b.kind : 'note';
     if (!text) throw new HttpError(400, 'متن یادداشت خالی است');
     const r = db.prepare('INSERT INTO customer_notes(customer_id,kind,text,created_by) VALUES(?,?,?,?)').run(id, kind, text, user.id);
-    if (isDate(b.follow_up)) db.prepare('UPDATE customers SET follow_up=? WHERE id=?').run(b.follow_up, id);
+    if (isDate(b.follow_up)) db.prepare('UPDATE customers SET follow_up=?, follow_up_note=? WHERE id=?').run(b.follow_up, String(b.follow_up_note || '').trim().slice(0, 200), id);
     db.prepare('UPDATE customers SET updated_at=CURRENT_TIMESTAMP WHERE id=?').run(id);
     return send(res, 201, { id: Number(r.lastInsertRowid) });
   }
@@ -916,7 +972,8 @@ const server = http.createServer(async (req, res) => {
   secHeaders(req, res);
   let url; try { url = new URL(req.url, 'http://x'); } catch { return send(res, 400, { error: 'درخواست نامعتبر' }); }
   try {
-    if (url.pathname === '/robots.txt') return send(res, 200, 'User-agent: *\nDisallow: /\n', { 'Content-Type': 'text/plain; charset=utf-8' });
+    // خزیدن صفحه ورود آزاد است تا ربات‌ها دستور noindex را ببینند (اگر خزیدن ممنوع باشد، noindex خوانده نمی‌شود)
+    if (url.pathname === '/robots.txt') return send(res, 200, 'User-agent: *\nDisallow: /api/\n', { 'Content-Type': 'text/plain; charset=utf-8' });
     if (url.pathname === '/healthz') return send(res, 200, 'ok', { 'Content-Type': 'text/plain' });
     if (url.pathname.startsWith('/api/')) { res.setHeader('Cache-Control', 'no-store'); return await api(req, res, url); }
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { error: 'روش مجاز نیست' });

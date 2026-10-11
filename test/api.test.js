@@ -33,7 +33,10 @@ test('security headers & noindex', async () => {
   const r = await call('x', 'GET', '/');
   for (const h of ['content-security-policy', 'x-frame-options', 'x-content-type-options', 'permissions-policy', 'x-robots-tag']) assert.ok(r.headers.get(h), h);
   assert.match(r.headers.get('content-security-policy'), /script-src 'self'/);
-  assert.match((await call('x', 'GET', '/robots.txt')).body.toString(), /Disallow: \//);
+  assert.match((await call('x', 'GET', '/robots.txt')).body.toString(), /Disallow: \/api\//);
+  assert.match(r.headers.get('x-robots-tag'), /noindex/);
+  assert.match((await call('x', 'GET', '/')).body.toString(), /<meta name="robots" content="noindex/);
+  assert.match((await call('x', 'GET', '/api/me')).headers.get('x-robots-tag'), /noindex/, 'API responses are noindex too');
   assert.equal((await call('x', 'GET', '/server.js')).headers.get('content-type').includes('html'), true, 'source must not be served');
   assert.equal((await call('x', 'GET', '/..%2fserver.js')).headers.get('content-type').includes('html'), true);
 });
@@ -175,6 +178,34 @@ test('report & import & csv injection', async () => {
   assert.equal((await call('acc', 'POST', '/api/import', { rows: rows.slice(0, 2) })).body.skipped, 2, 'duplicates skipped');
   const csv = (await call('owner', 'GET', '/api/export.csv')).body.toString();
   assert.ok(csv.includes('"\'=cmd|calc"'), 'formula injection neutralized'); 
+});
+
+
+test('CRM: tags, assignee, segments, duplicates, auto notes, import', async () => {
+  const team = (await call('acc', 'GET', '/api/team')).body; assert.ok(team.length >= 3);
+  const accId = team.find((u) => u.role === 'accountant').id;
+  const c1 = await call('acc', 'POST', '/api/customers', { name: 'سارا', phone: '0912 111 2233', tags: 'عمده، VIP,عمده', status: 'lead', assignee: accId, follow_up: '2026-10-01', follow_up_note: 'ارسال پیش‌فاکتور' });
+  assert.equal(c1.status, 201); assert.equal(c1.body.tags, 'عمده,VIP', 'tags normalized + deduped');
+  const dup = await call('acc', 'POST', '/api/customers', { name: 'سارا دوم', phone: '۰۹۱۲۱۱۱۲۲۳۳' });
+  assert.equal(dup.status, 409); assert.equal(dup.body.duplicate_id, c1.body.id, 'duplicate phone detected (persian digits too)');
+  assert.equal((await call('acc', 'POST', '/api/customers', { name: 'سارا دوم', phone: '09121112233', force: true })).status, 201);
+  assert.equal((await call('par', 'POST', '/api/customers', { name: 'x' })).status, 403);
+  assert.equal((await call('acc', 'POST', '/api/customers', { name: 'x', assignee: 9999 })).status, 400);
+  const list = (await call('par', 'GET', `/api/customers?today=2026-10-11&segment=followup`)).body;
+  assert.equal(list.rows.length, 1); assert.equal(list.rows[0].assignee_name, 'Acc'); assert.ok(list.facets.segments.followup >= 1); assert.equal(list.facets.tags['VIP'], 1);
+  assert.equal((await call('par', 'GET', '/api/customers?tag=VIP')).body.rows.length, 1);
+  assert.equal((await call('par', 'GET', `/api/customers?assignee=${accId}`)).body.rows.length, 1);
+  assert.equal((await call('par', 'GET', '/api/customers?q=' + encodeURIComponent('۰۹۱۲۱۱۱'))).body.rows.length, 2, 'search by phone with persian digits');
+  assert.equal((await call('acc', 'PUT', `/api/customers/${c1.body.id}`, { status: 'vip' })).status, 200);
+  const d = (await call('par', 'GET', `/api/customers/${c1.body.id}`)).body;
+  assert.ok(d.notes.some((n) => /وضعیت از «سرنخ» به «ویژه»/.test(n.text)), 'status change leaves a timeline note'); assert.equal(d.assignee_name, 'Acc'); assert.ok(Array.isArray(d.dues));
+  const link = await call('acc', 'POST', '/api/dues', { direction: 'in', number: '55', party: 'سارا', customer_id: c1.body.id, amount: 100, due_date: '2026-10-20' });
+  assert.equal((await call('par', 'GET', `/api/customers/${c1.body.id}`)).body.dues.length, 1);
+  const im = await call('acc', 'POST', '/api/customers/import', { rows: [{ name: 'وارداتی ۱', phone: '09350000001', tags: 'a,b' }, { name: 'سارا', phone: '09121112233' }, { name: '' }] });
+  assert.equal(im.body.imported, 1); assert.equal(im.body.skipped, 1); assert.equal(im.body.bad, 1);
+  const ov = (await call('par', 'GET', '/api/crm/overview?today=2026-10-11')).body; assert.ok(ov.stats.total >= 3); assert.ok(Array.isArray(ov.sources));
+  assert.equal((await call('par', 'POST', '/api/customers/import', { rows: [{ name: 'x' }] })).status, 403);
+  void link;
 });
 
 test('soft delete, trash and backups', async () => {
