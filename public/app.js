@@ -71,7 +71,7 @@ async function api(path, opts = {}) {
     .catch(() => { throw new Error('اتصال اینترنت برقرار نیست'); });
   const ct = r.headers.get('content-type') || '';
   const data = ct.includes('json') ? await r.json() : await r.text();
-  if (!r.ok) { if (r.status === 401 && me) { me = null; showLogin(); } throw new Error(data.error || 'خطا'); }
+  if (!r.ok) { if (r.status === 401 && me) { me = null; showLogin(); } const er = new Error(data.error || 'خطا'); er.status = r.status; er.data = data; throw er; }
   return data;
 }
 function toast(msg, kind = 'good', ms = 2600) {
@@ -83,25 +83,31 @@ const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toas
 // ---------- ورود ----------
 const hideSplash = () => $('#splash').classList.add('gone');
 function showLogin() { $('#app').classList.add('hidden'); $('#login').classList.remove('hidden'); $('#fab').classList.add('hidden'); hideSplash(); }
+let loginTicket = null;
+const resetLogin = () => { loginTicket = null; $('#codeWrap').classList.add('hidden'); $('#loginForm [name=code]').required = false; $('#loginBtn').textContent = 'ورود'; $('#loginForm [name=username]').closest('label').classList.remove('hidden'); $('#loginForm [name=password]').closest('label').classList.remove('hidden'); };
 $('#loginForm').onsubmit = async (e) => {
   e.preventDefault(); $('#loginErr').textContent = '';
-  const f = new FormData(e.target);
-  try { me = await api('/login', { method: 'POST', body: { username: f.get('username'), password: f.get('password') } }); e.target.reset(); start(); }
-  catch (er) { $('#loginErr').textContent = er.message; }
+  const f = new FormData(e.target), btn = $('#loginBtn'); btn.disabled = true;
+  try {
+    let r;
+    if (loginTicket) r = await api('/login/2fa', { method: 'POST', body: { ticket: loginTicket, code: f.get('code') } });
+    else r = await api('/login', { method: 'POST', body: { username: f.get('username'), password: f.get('password') } });
+    if (r.need_2fa) { loginTicket = r.ticket; $('#codeWrap').classList.remove('hidden'); const c = $('#loginForm [name=code]'); c.required = true; c.value = ''; c.focus(); btn.textContent = 'تأیید کد'; $('#loginErr').textContent = ''; return; }
+    me = r; e.target.reset(); resetLogin(); start();
+  } catch (er) { $('#loginErr').textContent = er.message; if (er.status === 401 && loginTicket && /منقضی/.test(er.message)) resetLogin(); }
+  finally { btn.disabled = false; }
 };
 $('#logoutBtn').onclick = async () => { await api('/logout', { method: 'POST', body: {} }); me = null; showLogin(); };
-$('#pwBtn').onclick = () => modal(`<h2>تغییر رمز عبور</h2><form class="form" id="pwForm">
-  <label class="full">رمز فعلی<input name="old" type="password" dir="ltr" required></label>
-  <label class="full">رمز جدید<input name="new" type="password" dir="ltr" minlength="6" required></label>
-  <div class="form-actions full"><button type="button" class="btn ghost" data-close>انصراف</button><button class="btn primary">ذخیره</button></div></form>`,
-  (s) => { $('#pwForm', s).onsubmit = guard(async (e) => { e.preventDefault(); const f = new FormData(e.target); await api('/password', { method: 'POST', body: { old: f.get('old'), new: f.get('new') } }); closeModal(); toast('رمز تغییر کرد'); }); });
+$('#pwBtn').onclick = () => accountModal();
 
 // ---------- مودال ----------
-function modal(html, init) {
+let modalLocked = false;
+function modal(html, init, opts = {}) {
+  modalLocked = !!opts.locked;
   const s = $('#sheet'); s.innerHTML = html; $('#modal').classList.remove('hidden');
   $$('[data-close]', s).forEach((b) => (b.onclick = closeModal)); init && init(s);
 }
-function closeModal() { $('#modal').classList.add('hidden'); $('#sheet').classList.remove('wide'); }
+function closeModal(force) { if (modalLocked && force !== true) return; modalLocked = false; $('#modal').classList.add('hidden'); $('#sheet').classList.remove('wide'); }
 $('#modal').onclick = (e) => { if (e.target.id === 'modal') closeModal(); };
 document.addEventListener('keydown', (e) => e.key === 'Escape' && closeModal());
 
@@ -112,8 +118,8 @@ async function start() {
   $('#meName').textContent = me.name; $('#meRole').textContent = ROLES[me.role]; $('#meAv').textContent = initial(me.name);
   const hr = new Date().getHours(); $('#greet').textContent = `${hr < 12 ? 'صبح بخیر' : hr < 18 ? 'روز بخیر' : 'عصر بخیر'}، ${me.name}`; $('#todayLine').textContent = 'امروز ' + showDate(todayIso());
   document.body.classList.toggle('readonly', me.role === 'partner'); document.body.classList.toggle('is-owner', me.role === 'owner');
-  
-  await loadCats(); goTab('dash');
+  if (me.must_change || me.need_2fa_setup) { $('#fab').classList.add('hidden'); return enforceSecurity(); }
+  await Promise.all([loadCats(), loadAccounts()]); goTab('dash');
 }
 async function loadCats() {
   cats = await api('/categories');
@@ -134,9 +140,9 @@ function goTab(t) {
   tab = t;
   $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
   $$('.tab').forEach((s) => { const on = s.id === 'tab-' + t; s.classList.toggle('hidden', !on); });
-  const fab = $('#fab'), fabAct = { dash: () => txModal(), tx: () => txModal(), inv: () => invModal().catch((e) => toast(e.message, 'bad')), crm: () => custModal() }[t];
+  const fab = $('#fab'), fabAct = { dash: () => txModal(), tx: () => txModal(), inv: () => invModal().catch((e) => toast(e.message, 'bad')), crm: () => custModal(), dues: () => chequeModal() }[t];
   fab.classList.toggle('hidden', !fabAct || me.role === 'partner'); fab.onclick = fabAct || null; window.scrollTo({ top: 0 });
-  ({ dash: loadDash, tx: () => loadTx(true), manage: () => showPanel(mp), inv: loadInv, crm: loadCrm })[t]();
+  ({ dash: loadDash, tx: () => loadTx(true), manage: () => showPanel(mp), inv: loadInv, crm: loadCrm, dues: loadDues })[t]();
 }
 $$('[data-new]').forEach((b) => (b.onclick = () => txModal()));
 
@@ -183,24 +189,25 @@ const loadDash = guard(async () => {
   $('#dFollow').innerHTML = ov.followups.length ? ov.followups.map((c, i) => `<div class="mrow" data-cust="${c.id}" style="animation-delay:${i * 50}ms"><span class="avatar">${esc(initial(c.name))}</span><div class="grow"><b>${esc(c.name)}</b><small>${esc(c.company || c.phone || '')}</small></div><span class="status ${c.follow_up < td ? 'late' : 'today'}">${c.follow_up < td ? 'عقب‌افتاده ' + showDate(c.follow_up) : 'امروز'}</span></div>`).join('') : '<div class="empty">پیگیری عقب‌افتاده‌ای نیست 🎉</div>';
   $('#dDebt').innerHTML = ov.debtors.length ? ov.debtors.map((c, i) => `<div class="mrow" data-cust="${c.id}" style="animation-delay:${i * 50}ms"><span class="avatar">${esc(initial(c.name))}</span><div class="grow"><b>${esc(c.name)}</b><small>${esc(c.company || c.phone || '')}</small></div><span class="amt expense">${fa(c.due)}</span></div>`).join('') : '<div class="empty">بدهی معوقی وجود ندارد</div>';
   $$('[data-cust]', $('#tab-dash')).forEach((el) => (el.onclick = () => openCustomer(el.dataset.cust)));
+  renderDashExtra();
 });
 
 // ---------- جدول تراکنش‌ها ----------
 function txTable(rows, actions = true) {
   if (!rows.length) return '<div class="empty">تراکنشی وجود ندارد</div>';
   const canW = me.role !== 'partner';
-  return `<table><thead><tr><th>تاریخ</th><th>نوع</th><th>مبلغ (تومان)</th><th>علت</th><th>طرف حساب</th><th>روش</th><th>توضیحات</th>${actions && canW ? '<th></th>' : ''}</tr></thead><tbody>${rows.map((r, i) => `
+  return `<table><thead><tr><th>تاریخ</th><th>نوع</th><th>مبلغ (تومان)</th><th>علت</th><th>طرف حساب</th><th>حساب</th><th>روش</th><th>توضیحات</th>${actions && canW ? '<th></th>' : ''}</tr></thead><tbody>${rows.map((r, i) => `
   <tr style="animation-delay:${Math.min(i, 15) * 35}ms"><td>${showDate(r.date)}</td><td><span class="tag">${r.type === 'income' ? '⬇ ورودی' : '⬆ خروجی'}</span></td>
-  <td class="amt ${r.type}">${r.type === 'income' ? '+' : '−'}${fa(r.amount)}</td><td>${esc(r.category || '—')}</td><td>${esc(r.party || '—')}</td>
-  <td>${METHODS[r.method] || ''}${r.ref ? ` <small class="muted">#${esc(r.ref)}</small>` : ''}</td><td class="muted">${esc(r.note)}</td>
+  <td class="amt ${r.type}">${r.type === 'income' ? '+' : '−'}${fa(r.amount)}</td><td>${esc(r.category || '—')}</td><td>${esc(r.party || '—')}</td><td>${esc(r.account || '—')}</td>
+  <td>${METHODS[r.method] || ''}${r.ref ? ` <small class="muted">#${esc(r.ref)}</small>` : ''}</td><td class="muted">${esc(r.note)}${r.att ? ` <button class="clip" data-att="transaction:${r.id}">📎 ${fa(r.att)}</button>` : ''}</td>
   ${actions && canW ? `<td class="act"><button data-edit="${r.id}" title="ویرایش">✎</button>${me.role === 'owner' ? `<button class="del" data-del="${r.id}" title="حذف">🗑</button>` : ''}</td>` : ''}</tr>`).join('')}</tbody></table>`;
 }
 let txRows = [], txOffset = 0, txTotal = 0, fFrom, fTo;
-const filters = () => ({ q: $('#fq').value.trim(), type: $('#ftype').value, category: $('#fcat').value, from: fFrom.get(), to: fTo.get() });
+const filters = () => ({ q: $('#fq').value.trim(), type: $('#ftype').value, category: $('#fcat').value, account: $('#facc').value, from: fFrom.get(), to: fTo.get() });
 fFrom = $('#ffrom'); fTo = $('#fto'); datePicker(fFrom, '', () => loadTx(true)); datePicker(fTo, '', () => loadTx(true));
 let debounce; $('#fq').oninput = () => { clearTimeout(debounce); debounce = setTimeout(() => loadTx(true), 300); };
-$('#ftype').onchange = $('#fcat').onchange = () => loadTx(true);
-$('#fclear').onclick = () => { $('#fq').value = ''; $('#ftype').value = ''; $('#fcat').value = ''; fFrom.set(''); fTo.set(''); loadTx(true); };
+$('#ftype').onchange = $('#fcat').onchange = $('#facc').onchange = () => loadTx(true);
+$('#fclear').onclick = () => { $('#fq').value = ''; $('#ftype').value = ''; $('#fcat').value = ''; $('#facc').value = ''; fFrom.set(''); fTo.set(''); loadTx(true); };
 $('#more').onclick = () => loadTx(false);
 $('#ftoggle').onclick = (e) => { const t = e.currentTarget.closest('.toolbar'); t.classList.toggle('open'); e.currentTarget.classList.toggle('on'); };
 $('#csv').onclick = (e) => { e.preventDefault(); location.href = '/api/export.csv' + qs(filters()); };
@@ -223,10 +230,12 @@ function txModal(tx) {
     <label>مبلغ (تومان)<input name="amount" inputmode="numeric" dir="ltr" required autofocus value="${tx ? tx.amount.toLocaleString('en') : ''}"></label>
     <label>تاریخ<div class="jdate" id="fdate"></div></label>
     <label id="catLbl">علت / دسته<select name="category_id"></select></label>
+    <label>حساب<select name="account_id">${accountOptions(tx ? tx.account_id : lastAccount())}</select></label>
     <label>روش پرداخت<select name="method">${Object.entries(METHODS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
     <label>طرف حساب<input name="party" maxlength="120" placeholder="نام شخص یا شرکت" value="${esc(tx?.party)}"></label>
     <label>شماره سند / فاکتور<input name="ref" maxlength="60" dir="ltr" value="${esc(tx?.ref)}"></label>
     <label class="full">توضیحات<textarea name="note" rows="2" maxlength="500">${esc(tx?.note)}</textarea></label>
+    <div class="full"><div class="lbl">پیوست رسید / فیش (عکس یا PDF)</div><div id="txAtt"></div></div>
     <div class="form-actions full"><button type="button" class="btn ghost" data-close>انصراف</button><button class="btn primary">${tx ? 'ذخیره تغییرات' : 'ثبت'}</button></div></form>`,
   (s) => {
     const f = $('#txForm', s), seg = $('#seg', s), dp = $('#fdate', s);
@@ -236,12 +245,15 @@ function txModal(tx) {
       $('[name=category_id]', f).innerHTML = '<option value="">— بدون دسته —</option>' + cats.filter((c) => c.type === type).map((c) => `<option value="${c.id}" ${tx && tx.category_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
     };
     seg.onclick = (e) => { const b = e.target.closest('button'); if (b) { type = b.dataset.t; paint(); } };
+    const aw = attachWidget($('#txAtt', s), 'transaction', tx ? tx.id : null, me.role !== 'partner');
     paint(); if (tx) f.method.value = tx.method;
     const amt = f.amount; amt.oninput = () => { const n = amt.value.replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/\D/g, ''); amt.value = n ? Number(n).toLocaleString('en') : ''; };
     f.onsubmit = guard(async (e) => {
       e.preventDefault(); const d = dp.get(); if (!d) throw new Error('تاریخ را کامل انتخاب کنید');
-      const body = { type, date: d, amount: f.amount.value.replace(/,/g, ''), category_id: f.category_id.value, method: f.method.value, party: f.party.value, ref: f.ref.value, note: f.note.value };
-      await api(tx ? '/transactions/' + tx.id : '/transactions', { method: tx ? 'PUT' : 'POST', body });
+      const body = { type, date: d, amount: f.amount.value.replace(/,/g, ''), category_id: f.category_id.value, account_id: f.account_id.value, method: f.method.value, party: f.party.value, ref: f.ref.value, note: f.note.value };
+      const saved = await api(tx ? '/transactions/' + tx.id : '/transactions', { method: tx ? 'PUT' : 'POST', body });
+      if (f.account_id.value) rememberAccount(f.account_id.value);
+      if (!tx) await aw.uploadPending(saved.id).catch((er) => toast(er.message, 'bad'));
       closeModal(); toast(tx ? 'ویرایش شد' : 'ثبت شد'); goTab(tab === 'tx' ? 'tx' : 'dash');
     });
   });
@@ -250,15 +262,16 @@ function txModal(tx) {
 // ---------- کاربران ----------
 const loadUsers = guard(async () => {
   const us = await api('/users');
-  $('#userTable').innerHTML = `<thead><tr><th>نام</th><th>نام کاربری</th><th>نقش</th><th>وضعیت</th><th></th></tr></thead><tbody>${us.map((u, i) => `<tr style="animation-delay:${i * 40}ms">
+  $('#userTable').innerHTML = `<thead><tr><th>نام</th><th>نام کاربری</th><th>نقش</th><th>وضعیت</th><th>ورود دومرحله‌ای</th><th></th></tr></thead><tbody>${us.map((u, i) => `<tr style="animation-delay:${i * 40}ms">
     <td>${esc(u.name)}</td><td dir="ltr" style="text-align:right">${esc(u.username)}</td>
     <td><select data-role="${u.id}" ${u.id === me.id ? 'disabled' : ''}>${Object.entries(ROLES).map(([k, v]) => `<option value="${k}" ${u.role === k ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
-    <td><span class="tag">${u.active ? 'فعال' : 'غیرفعال'}</span></td>
+    <td><span class="tag">${u.active ? 'فعال' : 'غیرفعال'}</span></td><td>${u.totp_enabled ? `<span class="status st-active">فعال</span> ${u.id !== me.id ? `<button class="btn ghost sm" data-r2fa="${u.id}">بازنشانی</button>` : ''}` : '<span class="muted">—</span>'}</td>
     <td class="act">${u.id !== me.id ? `<button data-toggle="${u.id}" data-on="${u.active}">${u.active ? 'غیرفعال‌سازی' : 'فعال‌سازی'}</button>` : ''}<button data-reset="${u.id}">رمز جدید</button></td></tr>`).join('')}</tbody>`;
   $$('[data-role]', $('#userTable')).forEach((s) => (s.onchange = guard(async () => { await api('/users/' + s.dataset.role, { method: 'PUT', body: { role: s.value } }); toast('نقش تغییر کرد'); })));
   $$('[data-toggle]').forEach((b) => (b.onclick = guard(async () => { await api('/users/' + b.dataset.toggle, { method: 'PUT', body: { active: b.dataset.on !== '1' } }); loadUsers(); })));
-  $$('[data-reset]').forEach((b) => (b.onclick = guard(async () => { const p = prompt('رمز جدید (حداقل ۶ کاراکتر):'); if (!p) return; await api('/users/' + b.dataset.reset, { method: 'PUT', body: { password: p } }); toast('رمز تغییر کرد'); })));
-  const log = await api('/audit'), L = { login: 'ورود', password: 'تغییر رمز', 'tx.create': 'ثبت تراکنش', 'tx.update': 'ویرایش تراکنش', 'tx.delete': 'حذف تراکنش', 'user.create': 'افزودن کاربر', 'user.update': 'ویرایش کاربر', 'backup.create': 'گرفتن بکاپ', 'backup.download': 'دانلود بکاپ', 'trash.restore': 'بازیابی از سطل', 'trash.purge': 'حذف دائمی', 'customer.create': 'افزودن مشتری', 'customer.update': 'ویرایش مشتری', 'customer.delete': 'حذف مشتری', 'invoice.create': 'صدور فاکتور', 'invoice.update': 'ویرایش فاکتور', 'invoice.delete': 'حذف فاکتور', 'invoice.pay': 'ثبت پرداخت فاکتور' };
+  $$('[data-r2fa]').forEach((b) => (b.onclick = guard(async () => { if (!confirm('ورود دومرحله‌ای این کاربر غیرفعال و از همه دستگاه‌ها خارج شود؟')) return; await api('/users/' + b.dataset.r2fa, { method: 'PUT', body: { reset_2fa: true } }); toast('بازنشانی شد'); loadUsers(); })));
+  $$('[data-reset]').forEach((b) => (b.onclick = guard(async () => { const p = prompt('رمز موقت جدید (حداقل ۱۰ کاراکتر؛ کاربر در ورود بعدی باید آن را عوض کند):'); if (!p) return; await api('/users/' + b.dataset.reset, { method: 'PUT', body: { password: p } }); toast('رمز تغییر کرد'); })));
+  const log = await api('/audit'), L = { login: 'ورود', password: 'تغییر رمز', 'tx.create': 'ثبت تراکنش', 'tx.update': 'ویرایش تراکنش', 'tx.delete': 'حذف تراکنش', 'user.create': 'افزودن کاربر', 'user.update': 'ویرایش کاربر', 'backup.create': 'گرفتن بکاپ', 'backup.download': 'دانلود بکاپ', 'trash.restore': 'بازیابی از سطل', 'trash.purge': 'حذف دائمی', 'login.fail': 'ورود ناموفق', 'login.fail2fa': 'کد دومرحله‌ای نادرست', '2fa.enable': 'فعال‌سازی ۲FA', '2fa.disable': 'غیرفعال‌سازی ۲FA', '2fa.recovery_used': 'استفاده از کد بازیابی', 'account.create': 'ایجاد حساب', 'account.update': 'ویرایش حساب', 'account.delete': 'حذف حساب', 'transfer.create': 'انتقال بین حساب‌ها', 'transfer.delete': 'حذف انتقال', 'attachment.add': 'افزودن پیوست', 'attachment.delete': 'حذف پیوست', 'due.create': 'ثبت چک/قسط', 'due.update': 'ویرایش چک/قسط', 'due.done': 'تسویه چک/قسط', 'due.bounced': 'برگشت چک', 'due.cancelled': 'لغو چک/قسط', 'due.reopen': 'بازگشایی چک/قسط', 'due.delete': 'حذف چک/قسط', 'import': 'ورود از اکسل', 'customer.create': 'افزودن مشتری', 'customer.update': 'ویرایش مشتری', 'customer.delete': 'حذف مشتری', 'invoice.create': 'صدور فاکتور', 'invoice.update': 'ویرایش فاکتور', 'invoice.delete': 'حذف فاکتور', 'invoice.pay': 'ثبت پرداخت فاکتور' };
   $('#auditList').innerHTML = log.map((a) => `<div><b>${esc(a.who || '—')}</b>${L[a.action] || esc(a.action)}<span style="margin-inline-start:auto" dir="ltr">${esc(a.at)}</span></div>`).join('') || '<div class="empty">—</div>';
 });
 $('#userForm').onsubmit = guard(async (e) => {
@@ -270,10 +283,10 @@ $('#userForm').onsubmit = guard(async (e) => {
 let mp = 'cats';
 $('#mChips').onclick = (e) => { const b = e.target.closest('button'); if (b) showPanel(b.dataset.p); };
 function showPanel(p) {
-  if (me.role !== 'owner') p = 'cats'; mp = p;
+  if (me.role !== 'owner' && !['cats', 'accounts'].includes(p)) p = 'cats'; mp = p;
   $$('#mChips button').forEach((b) => b.classList.toggle('active', b.dataset.p === p));
   $$('.mpanel').forEach((el) => el.classList.toggle('hidden', el.dataset.p !== p));
-  ({ cats: () => {}, users: loadUsers, backup: loadBackups, trash: loadTrash })[p]();
+  ({ cats: () => {}, accounts: loadAccountsPanel, users: loadUsers, backup: loadBackups, trash: loadTrash })[p]();
 }
 const fmtSize = (n) => (n > 1048576 ? fa(+(n / 1048576).toFixed(1)) + ' مگابایت' : fa(Math.max(1, Math.round(n / 1024))) + ' کیلوبایت');
 const fmtDT = (ms) => { const d = new Date(ms); return `${showDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`)} — ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
@@ -291,6 +304,7 @@ const loadBackups = guard(async () => {
 const TR = {
   transactions: { title: 'تراکنش‌ها', line: (x) => `${x.type === 'income' ? '⬇ ورودی' : '⬆ خروجی'} ${fa(x.amount)} تومان — ${esc(x.category || 'بدون دسته')}${x.party ? ' — ' + esc(x.party) : ''}`, sub: (x) => showDate(x.date) },
   invoices: { title: 'فاکتورها', line: (x) => `فاکتور ${fa(x.number).replace(/٬/g, '')} — ${esc(x.customer)} — ${fa(x.total)} تومان`, sub: (x) => showDate(x.date) },
+  dues: { title: 'چک‌ها و اقساط', line: (x) => `${x.kind === 'cheque' ? 'چک' : 'قسط'} ${x.direction === 'in' ? 'دریافتی' : 'پرداختی'} ${fa(x.amount)} تومان${x.party ? ' — ' + esc(x.party) : ''}`, sub: (x) => 'سررسید ' + showDate(x.due_date) },
   customers: { title: 'مشتریان', line: (x) => `${esc(x.name)}${x.company ? ' — ' + esc(x.company) : ''}`, sub: (x) => STATUS[x.status] },
 };
 const loadTrash = guard(async () => {
@@ -385,9 +399,10 @@ function payModal(inv) {
   modal(`<h2>ثبت دریافت وجه فاکتور ${fa(inv.number).replace(/٬/g, '')}</h2><p class="muted">مبلغ ${fa(inv.total)} تومان به‌عنوان «ورودی» در تراکنش‌ها ثبت می‌شود.</p><form class="form" id="payForm">
     <label>تاریخ دریافت<div class="jdate" id="pdate"></div></label>
     <label>روش پرداخت<select name="method">${Object.entries(METHODS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
+    <label class="full">واریز به حساب<select name="account_id">${accountOptions(lastAccount())}</select></label>
     <div class="form-actions full"><button type="button" class="btn ghost" data-close>انصراف</button><button class="btn primary">ثبت دریافت</button></div></form>`,
   (s) => { const dp = $('#pdate', s); datePicker(dp, todayIso());
-    $('#payForm', s).onsubmit = guard(async (e) => { e.preventDefault(); await api(`/invoices/${inv.id}/pay`, { method: 'POST', body: { date: dp.get(), method: e.target.method.value } }); closeModal(); toast('دریافت ثبت شد'); loadInv(); }); });
+    $('#payForm', s).onsubmit = guard(async (e) => { e.preventDefault(); await api(`/invoices/${inv.id}/pay`, { method: 'POST', body: { date: dp.get(), method: e.target.method.value, account_id: e.target.account_id.value || null } }); if (e.target.account_id.value) rememberAccount(e.target.account_id.value); closeModal(); toast('دریافت ثبت شد'); loadInv(); }); });
 }
 function paperHtml(v) {
   const n = fa(v.number).replace(/٬/g, '');
